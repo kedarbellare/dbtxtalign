@@ -10,7 +10,7 @@ import collection.mutable.HashSet
 class UnionIndexBlocker(val indices: Seq[InvertedIndexBlocker], val useOr: Boolean) extends AbstractBlocker {
   private val allPairs = new HashSet[(String, String)]
   if (useOr) indices.foreach(idx => allPairs ++= idx.getAllPairs)
-  else {
+  else if (indices.size > 0) {
     val index1Pairs = indices(0).getAllPairs
     if (indices.size > 1) {
       val restIndices = indices.drop(1)

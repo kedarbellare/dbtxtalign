@@ -1,6 +1,6 @@
 package cc.dbtxtalign
 
-import blocking.{UnionIndexBlocker, InvertedIndexBlocker, PhraseHash}
+import blocking.{AbstractBlocker, UnionIndexBlocker, InvertedIndexBlocker, PhraseHash}
 import collection.mutable.HashMap
 import cc.refectorie.user.kedarb.dynprog.types.Indexer
 import cc.refectorie.user.kedarb.dynprog.segment.Segmentation
@@ -23,6 +23,40 @@ object BFTApp {
     else if (s.matches(DOTW)) "$day$"
     else if (s.matches(MONTH)) "$month$"
     else s
+  }
+
+  def getBlocker(rawMentions: Seq[Mention], id2mention: HashMap[String, Mention],
+                 cluster2ids: HashMap[String, Seq[String]]): AbstractBlocker = {
+    val nameIndex1 = new InvertedIndexBlocker(250, rawMentions, {
+      m: Mention => PhraseHash.ngramWordHash(m.extractTrueWordsFor("hotelname"), 1)
+    }, {
+      m: Mention => PhraseHash.ngramWordHash(m.words, 1)
+    })
+    val nameIndex2 = new InvertedIndexBlocker(50, rawMentions, {
+      m: Mention => PhraseHash.ngramCharHash(m.extractTrueWordsFor("hotelname"), 3)
+    }, {
+      m: Mention => PhraseHash.ngramCharHash(m.words, 3)
+    })
+    val areaIndex1 = new InvertedIndexBlocker(250, rawMentions, {
+      m: Mention => PhraseHash.ngramWordHash(m.extractTrueWordsFor("localarea"), 1)
+    }, {
+      m: Mention => PhraseHash.ngramWordHash(m.words, 1)
+    })
+    val areaIndex2 = new InvertedIndexBlocker(50, rawMentions, {
+      m: Mention => PhraseHash.ngramCharHash(m.extractTrueWordsFor("localarea"), 3)
+    }, {
+      m: Mention => PhraseHash.ngramCharHash(m.words, 3)
+    })
+    val unionIndex1 = new UnionIndexBlocker(Seq(nameIndex1, nameIndex2, areaIndex1), true)
+
+    // recall of hash1
+    println("#name1Pairs=" + nameIndex1.numPairs + " recall=" + nameIndex1.getRecall(cluster2ids, id2mention))
+    println("#name2Pairs=" + nameIndex2.numPairs + " recall=" + nameIndex2.getRecall(cluster2ids, id2mention))
+    println("#area1Pairs=" + areaIndex1.numPairs + " recall=" + areaIndex1.getRecall(cluster2ids, id2mention))
+    println("#area2Pairs=" + areaIndex2.numPairs + " recall=" + areaIndex2.getRecall(cluster2ids, id2mention))
+    println("#unionPairs=" + unionIndex1.numPairs + " recall=" + unionIndex1.getRecall(cluster2ids, id2mention, true))
+
+    unionIndex1
   }
 
   def main(args: Array[String]) {
@@ -57,34 +91,7 @@ object BFTApp {
     for ((id, cluster) <- id2cluster) cluster2ids(cluster) = cluster2ids.getOrElse(cluster, Seq.empty[String]) ++ Seq(id)
     
     // 1. Calculate candidate pairs using hotelname and localarea
-    val nameIndex1 = new InvertedIndexBlocker(250, rawMentions, {
-      m: Mention => PhraseHash.ngramWordHash(m.extractTrueWordsFor("hotelname"), 1)
-    }, {
-      m: Mention => PhraseHash.ngramWordHash(m.words, 1)
-    })
-    val nameIndex2 = new InvertedIndexBlocker(50, rawMentions, {
-      m: Mention => PhraseHash.ngramCharHash(m.extractTrueWordsFor("hotelname"), 3)
-    }, {
-      m: Mention => PhraseHash.ngramCharHash(m.words, 3)
-    })
-    val areaIndex1 = new InvertedIndexBlocker(250, rawMentions, {
-      m: Mention => PhraseHash.ngramWordHash(m.extractTrueWordsFor("localarea"), 1)
-    }, {
-      m: Mention => PhraseHash.ngramWordHash(m.words, 1)
-    })
-    val areaIndex2 = new InvertedIndexBlocker(50, rawMentions, {
-      m: Mention => PhraseHash.ngramCharHash(m.extractTrueWordsFor("localarea"), 3)
-    }, {
-      m: Mention => PhraseHash.ngramCharHash(m.words, 3)
-    })
-    val unionIndex1 = new UnionIndexBlocker(Seq(nameIndex1, nameIndex2, areaIndex1), true)
-
-    // recall of hash1
-    println("#name1Pairs=" + nameIndex1.numPairs + " recall=" + nameIndex1.getRecall(cluster2ids, id2mention))
-    println("#name2Pairs=" + nameIndex2.numPairs + " recall=" + nameIndex2.getRecall(cluster2ids, id2mention))
-    println("#area1Pairs=" + areaIndex1.numPairs + " recall=" + areaIndex1.getRecall(cluster2ids, id2mention))
-    println("#area2Pairs=" + areaIndex2.numPairs + " recall=" + areaIndex2.getRecall(cluster2ids, id2mention))
-    println("#unionPairs=" + unionIndex1.numPairs + " recall=" + unionIndex1.getRecall(cluster2ids, id2mention, true))
+    val unionIndex1 = getBlocker(rawMentions, id2mention, cluster2ids)
 
     // 2. Find for the set of records that are candidate matches for each text
     var maxRecordsMatched = 0
