@@ -1,6 +1,6 @@
 package cc.dbtxtalign
 
-import blocking.{PhraseHash, InvertedIndexBlocker}
+import blocking.{PhraseHash, InvertedIndexBlocker, UnionIndexBlocker}
 import cc.refectorie.user.kedarb.dynprog.types.Indexer
 import collection.mutable.HashMap
 import cc.refectorie.user.kedarb.dynprog.segment.Segmentation
@@ -49,13 +49,21 @@ object RexaApp {
     for ((id, cluster) <- id2cluster) cluster2ids(cluster) = cluster2ids.getOrElse(cluster, Seq.empty[String]) ++ Seq(id)
 
     // 1. calculate candidate pairs using author and title
-    val authorIndex1 = new InvertedIndexBlocker(50, rawMentions, {
+    val authorIndex1 = new InvertedIndexBlocker(500, rawMentions, {
       m: Mention => PhraseHash.ngramWordHash(m.extractTrueWordsFor("author"), 1)
     }, {
       m: Mention => PhraseHash.ngramWordHash(m.words, 1)
     })
+    val titleIndex1 = new InvertedIndexBlocker(500, rawMentions, {
+      m: Mention => PhraseHash.ngramWordHash(m.extractTrueWordsFor("title"), 2)
+    }, {
+      m: Mention => PhraseHash.ngramWordHash(m.words, 2)
+    })
+    val unionIndex1 = new UnionIndexBlocker(Seq(authorIndex1, titleIndex1), false)
 
     // recall of hash1
     println("#author1Pairs=" + authorIndex1.numPairs + " recall=" + authorIndex1.getRecall(cluster2ids, id2mention))
+    println("#title1Pairs=" + titleIndex1.numPairs + " recall=" + titleIndex1.getRecall(cluster2ids, id2mention))
+    println("#unionPairs=" + unionIndex1.numPairs + " recall=" + unionIndex1.getRecall(cluster2ids, id2mention, false))
   }
 }
