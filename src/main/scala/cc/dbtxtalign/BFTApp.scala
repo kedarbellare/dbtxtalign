@@ -2,8 +2,9 @@ package cc.dbtxtalign
 
 import blocking.{AbstractBlocker, UnionIndexBlocker, InvertedIndexBlocker, PhraseHash}
 import cc.refectorie.user.kedarb.dynprog.types.Indexer
-import cc.refectorie.user.kedarb.dynprog.segment.Segmentation
 import collection.mutable.{ArrayBuffer, HashMap}
+import cc.refectorie.user.kedarb.dynprog.InferSpec
+import java.io.PrintWriter
 
 /**
  * @author kedar
@@ -60,10 +61,6 @@ object BFTApp extends AbstractAlign {
   }
 
   def main(args: Array[String]) {
-    val labelIndexer = new Indexer[String]
-    val featureIndexer = new Indexer[String]
-    val maxLengths = new ArrayBuffer[Int]
-
     val rawRecords = FileHelper.getRawMentions(true, args(0))
     val rawTexts = FileHelper.getRawMentions(false, args(1))
     val rawMentions = rawRecords ++ rawTexts
@@ -80,11 +77,16 @@ object BFTApp extends AbstractAlign {
 
     val id2cluster = FileHelper.getMentionClusters(args(2))
     val cluster2ids = getClusterToIds(id2cluster)
+    val examples = id2example.values.toSeq
 
     // 1. Calculate candidate pairs using hotelname and localarea
     val blocker = getBlocker(rawMentions, id2mention, cluster2ids)
 
     // 2. Find for the set of records that are candidate matches for each text
     println("#maxMatched=" + getMaxRecordsMatched(rawTexts, rawRecords, blocker))
+
+    // 3. Segment HMM baseline
+    val segparams = learnEMSegmentParamsHMM(20, examples, 1e-2, 1e-2)
+    decodeSegmentParamsHMM("bft.hmm.true.txt", "bft.hmm.pred.txt", examples, segparams)
   }
 }

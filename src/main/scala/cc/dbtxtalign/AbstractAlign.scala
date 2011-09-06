@@ -1,9 +1,13 @@
 package cc.dbtxtalign
 
 import blocking.AbstractBlocker
-import cc.refectorie.user.kedarb.dynprog.types.{FtrVec, Indexer}
-import cc.refectorie.user.kedarb.dynprog.segment.Segmentation
 import collection.mutable.{ArrayBuffer, HashMap}
+import java.io.PrintWriter
+import params.{EmissionParams, TransitionParams, SegmentParams}
+import cc.refectorie.user.kedarb.dynprog.types.{ParamUtils, FtrVec, Indexer}
+import cc.refectorie.user.kedarb.dynprog.utils.Utils._
+import cc.refectorie.user.kedarb.dynprog.InferSpec
+import cc.refectorie.user.kedarb.dynprog.segment._
 
 /**
  * @author kedar
@@ -11,7 +15,49 @@ import collection.mutable.{ArrayBuffer, HashMap}
 
 
 trait AbstractAlign {
+  val labelIndexer = new Indexer[String]
+  val featureIndexer = new Indexer[String]
+  val maxLengths = new ArrayBuffer[Int]
+  val otherLabelIndex = labelIndexer.indexOf_!("O")
+
   def simplify(s: String): String
+
+  def adjustSegmentation(words: Seq[String], segmentation: Segmentation): Segmentation = {
+    val adjSegmentation = new Segmentation(segmentation.length)
+    val puncPattern = "^[^A-Za-z0-9]*$"
+    forIndex(segmentation.numSegments, {
+      s: Int =>
+        val segment = segmentation.segment(s)
+        val mod_begin = {
+          var i = segment.begin
+          while (i < segment.end && words(i).matches(puncPattern)) i += 1
+          i
+        }
+        if (mod_begin == segment.end) {
+          // whole phrase is punctuations
+          require(adjSegmentation.append(Segment(segment.begin, segment.end, otherLabelIndex)))
+        } else {
+          if (mod_begin > segment.begin) {
+            // prefix is punctuation
+            require(adjSegmentation.append(Segment(segment.begin, mod_begin, otherLabelIndex)))
+          }
+          val mod_end = {
+            var i = segment.end - 1
+            while (i >= mod_begin && words(i).matches(puncPattern)) i -= 1
+            i + 1
+          }
+          if (mod_end == segment.end) {
+            // rest is valid
+            require(adjSegmentation.append(Segment(mod_begin, segment.end, segment.label)))
+          } else {
+            // suffix is punctuation
+            require(adjSegmentation.append(Segment(mod_begin, mod_end, segment.label)))
+            require(adjSegmentation.append(Segment(mod_end, segment.end, otherLabelIndex)))
+          }
+        }
+    })
+    adjSegmentation
+  }
 
   def getBlocker(rawMentions: Seq[Mention], id2mention: HashMap[String, Mention],
                  cluster2ids: HashMap[String, Seq[String]]): AbstractBlocker
@@ -55,7 +101,6 @@ trait AbstractAlign {
   }
 
   def getSegmentationAndMaxLength_!(m: Mention, indexer: Indexer[String], maxLengths: ArrayBuffer[Int]): Segmentation = {
-    val otherLabelIndex = indexer.indexOf_!("O")
     val trueSeg = getSegmentation_!(m, indexer)
     // default length is 1
     while (indexer.size != maxLengths.size) maxLengths += 1
@@ -83,5 +128,69 @@ trait AbstractAlign {
       if (maxRecordsMatched < numRecords) maxRecordsMatched = numRecords
     }
     maxRecordsMatched
+  }
+
+  def newSegmentParams(isProb: Boolean, isDense: Boolean,
+                       labelIndexer: Indexer[String], featureIndexer: Indexer[String]): SegmentParams = {
+    import ParamUtils._
+    val L = labelIndexer.size
+    val F = featureIndexer.size
+    val starts = if (isProb) newPrVec(isDense, L) else newWtVec(isDense, L)
+    val transitions = if (isProb) newPrVecArray(isDense, L, L) else newWtVecArray(isDense, L, L)
+    val emissions = if (isProb) newPrVecArray(isDense, L, F) else newWtVecArray(isDense, L, F)
+    new SegmentParams(
+      new TransitionParams(labelIndexer, starts, transitions),
+      new EmissionParams(labelIndexer, featureIndexer, emissions))
+  }
+
+  // Learning functions
+  // 1. Segment HMM trained with EM
+  def learnEMSegmentParamsHMM(numIter: Int, examples: Seq[FeatMentionExample],
+                                  unlabeledWeight: Double, smoothing: Double): SegmentParams = {
+    var segparams = newSegmentParams(true, true, labelIndexer, featureIndexer)
+    segparams.setUniform_!
+    segparams.normalize_!(smoothing)
+
+    for (iter <- 1 to 20) {
+      val segcounts = newSegmentParams(true, true, labelIndexer, featureIndexer)
+      var loglike = 0.0
+      for (ex <- examples) {
+        val stepSize = if (ex.isRecord) 1 else unlabeledWeight
+        val inferencer = new HMMSegmentationInferencer(labelIndexer, maxLengths, ex, segparams, segcounts,
+          InferSpec(iter, 1, false, ex.isRecord, false, false, true, false, 1, stepSize))
+        loglike += inferencer.logZ
+        inferencer.updateCounts
+      }
+      println("*** iteration[" + iter + "] loglike=" + loglike)
+      segcounts.normalize_!(smoothing)
+      segparams = segcounts
+    }
+
+    segparams
+  }
+
+  def decodeSegmentParamsHMM(trueFilename: String, predFilename: String,
+                             examples: Seq[FeatMentionExample], segparams: SegmentParams) {
+    val trueOut = new PrintWriter(trueFilename)
+    val predOut = new PrintWriter(predFilename)
+    val segmentPerf = new SegmentSegmentationEvaluator("textSegEval", labelIndexer)
+    val tokenPerf = new SegmentLabelAccuracyEvaluator("textLblEval")
+    val perLabelPerf = new SegmentPerLabelAccuracyEvaluator("textPerLblEval", labelIndexer)
+    for (ex <- examples if !ex.isRecord) {
+      val inferencer = new HMMSegmentationInferencer(labelIndexer, maxLengths, ex, segparams, segparams,
+        InferSpec(0, 1, false, ex.isRecord, true, false, true, false, 1, 0))
+      val predSeg = adjustSegmentation(ex.words, inferencer.bestWidget)
+      val trueSeg = adjustSegmentation(ex.words, ex.trueSegmentation)
+      tokenPerf.add(trueSeg, predSeg)
+      segmentPerf.add(trueSeg, predSeg)
+      perLabelPerf.add(trueSeg, predSeg)
+      predOut.println(SegmentationHelper.toFullString(ex.words, predSeg, labelIndexer(_)))
+      trueOut.println(SegmentationHelper.toFullString(ex.words, trueSeg, labelIndexer(_)))
+    }
+    tokenPerf.output(println(_))
+    perLabelPerf.output(println(_))
+    segmentPerf.output(println(_))
+    trueOut.close()
+    predOut.close()
   }
 }

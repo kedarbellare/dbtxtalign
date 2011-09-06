@@ -2,7 +2,6 @@ package cc.dbtxtalign
 
 import blocking.{AbstractBlocker, PhraseHash, InvertedIndexBlocker, UnionIndexBlocker}
 import cc.refectorie.user.kedarb.dynprog.types.Indexer
-import cc.refectorie.user.kedarb.dynprog.segment.Segmentation
 import collection.mutable.{ArrayBuffer, HashMap}
 
 /**
@@ -51,10 +50,6 @@ object RexaApp extends AbstractAlign {
   }
 
   def main(args: Array[String]) {
-    val labelIndexer = new Indexer[String]
-    // val featureIndexer = new Indexer[String]
-    val maxLengths = new ArrayBuffer[Int]
-
     val rawRecords = FileHelper.getRawMentions(true, args(0))
     val rawTexts = FileHelper.getRawMentions(false, args(1))
     val rawMentions = rawRecords ++ rawTexts

@@ -20,6 +20,8 @@ trait ASegmentationBasedInferencer[Feature, Example <: AFeatMentionExample[Featu
 
   lazy val L: Int = labelIndexer.size
 
+  lazy val otherLabelIndex: Int = labelIndexer.indexOf_!("O")
+
   lazy val N: Int = ex.numTokens
 
   lazy val isRecord: Boolean = ex.isRecord
@@ -44,10 +46,10 @@ trait ASegmentationBasedInferencer[Feature, Example <: AFeatMentionExample[Featu
         // only allow sub-segments that are a subset of segment at i
         val optionSegmentAtI = trueSegmentation.segmentAt(i)
         optionSegmentAtI.isDefined && optionSegmentAtI.get.end >= j &&
-          (labelIndexer(a) == "O" || cachedPossibleEnds(j) || optionSegmentAtI.get.end == j)
+          (a == otherLabelIndex || cachedPossibleEnds(j) || optionSegmentAtI.get.end == j)
       } else {
         // allow all possible segments
-        labelIndexer(a) == "O" || cachedPossibleEnds(j)
+        a == otherLabelIndex || cachedPossibleEnds(j)
       }
     }
   }
@@ -114,12 +116,12 @@ trait ASegmentationBasedInferencer[Feature, Example <: AFeatMentionExample[Featu
         val node = (a, i)
         if (H.addSumNode(node)) {
           forIndex(L, (b: Int) => {
-            forIndex(i + 1, math.min(maxLengths(b), N) + 1, (j: Int) => {
+            forIndex(i + 1, math.min(i + maxLengths(b), N) + 1, (j: Int) => {
               if (allowedTransition(a, b) && allowedSegment(b, i, j)) {
                 H.addEdge(node, gen(b, j), new Info {
                   def getWeight = scoreTransition(a, b, i, j) + scoreEmission(b, i, j)
 
-                  def setPosterior(v: Double) = {
+                  def setPosterior(v: Double) {
                     updateTransition(a, b, i, j, v)
                     updateEmission(b, i, j, v)
                   }
@@ -144,7 +146,7 @@ trait ASegmentationBasedInferencer[Feature, Example <: AFeatMentionExample[Featu
           H.addEdge(H.sumStartNode, gen(a, i), new Info {
             def getWeight = scoreStart(a, i) + scoreEmission(a, 0, i)
 
-            def setPosterior(v: Double) = {
+            def setPosterior(v: Double) {
               updateStart(a, i, v)
               updateEmission(a, 0, i, v)
             }
