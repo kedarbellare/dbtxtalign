@@ -8,6 +8,7 @@ import cc.refectorie.user.kedarb.dynprog.types.{ParamUtils, FtrVec, Indexer}
 import cc.refectorie.user.kedarb.dynprog.utils.Utils._
 import cc.refectorie.user.kedarb.dynprog.InferSpec
 import cc.refectorie.user.kedarb.dynprog.segment._
+import org.apache.log4j.Logger
 
 /**
  * @author kedar
@@ -19,6 +20,8 @@ trait AbstractAlign {
   val featureIndexer = new Indexer[String]
   val maxLengths = new ArrayBuffer[Int]
   val otherLabelIndex = labelIndexer.indexOf_!("O")
+
+  def logger: Logger
 
   def simplify(s: String): String
 
@@ -161,7 +164,7 @@ trait AbstractAlign {
         loglike += inferencer.logZ
         inferencer.updateCounts
       }
-      println("*** iteration[" + iter + "] loglike=" + loglike)
+      logger.info("*** iteration[" + iter + "] loglike=" + loglike)
       segcounts.normalize_!(smoothing)
       segparams = segcounts
     }
@@ -187,9 +190,9 @@ trait AbstractAlign {
       predOut.println(SegmentationHelper.toFullString(ex.words, predSeg, labelIndexer(_)))
       trueOut.println(SegmentationHelper.toFullString(ex.words, trueSeg, labelIndexer(_)))
     }
-    tokenPerf.output(println(_))
-    perLabelPerf.output(println(_))
-    segmentPerf.output(println(_))
+    tokenPerf.output(logger.info(_))
+    perLabelPerf.output(logger.info(_))
+    segmentPerf.output(logger.info(_))
     trueOut.close()
     predOut.close()
   }

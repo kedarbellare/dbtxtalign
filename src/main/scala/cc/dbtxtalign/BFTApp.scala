@@ -1,16 +1,16 @@
 package cc.dbtxtalign
 
 import blocking.{AbstractBlocker, UnionIndexBlocker, InvertedIndexBlocker, PhraseHash}
-import cc.refectorie.user.kedarb.dynprog.types.Indexer
-import collection.mutable.{ArrayBuffer, HashMap}
-import cc.refectorie.user.kedarb.dynprog.InferSpec
-import java.io.PrintWriter
+import collection.mutable.HashMap
+import org.apache.log4j.Logger
 
 /**
  * @author kedar
  */
 
 object BFTApp extends AbstractAlign {
+  val logger = Logger.getLogger(this.getClass.getSimpleName)
+
   val MONTH = "(?:january|february|march|april|may|june|july|august|september|october|november|december|" +
     "jan|feb|apr|jun|jul|aug|sep|sept|oct|nov|dec)"
   val DOTW = "(?:mon|tues?|wed(?:nes)?|thurs?|fri|satu?r?|sun)(?:day)?"
@@ -51,11 +51,11 @@ object BFTApp extends AbstractAlign {
     val unionIndex1 = new UnionIndexBlocker(Seq(nameIndex1, nameIndex2, areaIndex1), true)
 
     // recall of hash1
-    println("#name1Pairs=" + nameIndex1.numPairs + " recall=" + nameIndex1.getRecall(cluster2ids, id2mention))
-    println("#name2Pairs=" + nameIndex2.numPairs + " recall=" + nameIndex2.getRecall(cluster2ids, id2mention))
-    println("#area1Pairs=" + areaIndex1.numPairs + " recall=" + areaIndex1.getRecall(cluster2ids, id2mention))
-    println("#area2Pairs=" + areaIndex2.numPairs + " recall=" + areaIndex2.getRecall(cluster2ids, id2mention))
-    println("#unionPairs=" + unionIndex1.numPairs + " recall=" + unionIndex1.getRecall(cluster2ids, id2mention, true))
+    logger.info("#name1Pairs=" + nameIndex1.numPairs + " recall=" + nameIndex1.getRecall(cluster2ids, id2mention))
+    logger.info("#name2Pairs=" + nameIndex2.numPairs + " recall=" + nameIndex2.getRecall(cluster2ids, id2mention))
+    logger.info("#area1Pairs=" + areaIndex1.numPairs + " recall=" + areaIndex1.getRecall(cluster2ids, id2mention))
+    logger.info("#area2Pairs=" + areaIndex2.numPairs + " recall=" + areaIndex2.getRecall(cluster2ids, id2mention))
+    logger.info("#unionPairs=" + unionIndex1.numPairs + " recall=" + unionIndex1.getRecall(cluster2ids, id2mention, true))
 
     unionIndex1
   }
@@ -64,7 +64,7 @@ object BFTApp extends AbstractAlign {
     val rawRecords = FileHelper.getRawMentions(true, args(0))
     val rawTexts = FileHelper.getRawMentions(false, args(1))
     val rawMentions = rawRecords ++ rawTexts
-    println("#records=" + rawRecords.size + " #texts=" + rawTexts.size)
+    logger.info("#records=" + rawRecords.size + " #texts=" + rawTexts.size)
 
     val id2mention = new HashMap[String, Mention]
     val id2example = new HashMap[String, FeatMentionExample]
@@ -83,7 +83,7 @@ object BFTApp extends AbstractAlign {
     val blocker = getBlocker(rawMentions, id2mention, cluster2ids)
 
     // 2. Find for the set of records that are candidate matches for each text
-    println("#maxMatched=" + getMaxRecordsMatched(rawTexts, rawRecords, blocker))
+    logger.info("#maxMatched=" + getMaxRecordsMatched(rawTexts, rawRecords, blocker))
 
     // 3. Segment HMM baseline
     val segparams = learnEMSegmentParamsHMM(20, examples, 1e-2, 1e-2)

@@ -1,8 +1,8 @@
 package cc.dbtxtalign
 
 import blocking.{AbstractBlocker, PhraseHash, InvertedIndexBlocker, UnionIndexBlocker}
-import cc.refectorie.user.kedarb.dynprog.types.Indexer
-import collection.mutable.{ArrayBuffer, HashMap}
+import collection.mutable.HashMap
+import org.apache.log4j.Logger
 
 /**
  * @author kedar
@@ -10,6 +10,8 @@ import collection.mutable.{ArrayBuffer, HashMap}
 
 
 object RexaApp extends AbstractAlign {
+  val logger = Logger.getLogger(this.getClass.getSimpleName)
+
   val YEAR = "(19|20)\\d\\d[a-z]?"
   val REFMARKER = "\\[[A-Za-z]*\\d+\\]"
   val INITIALS = "[A-Z]\\."
@@ -42,9 +44,9 @@ object RexaApp extends AbstractAlign {
     val unionIndex1 = new UnionIndexBlocker(Seq(authorIndex1, titleIndex1), false)
 
     // recall of hashes
-    println("#author1Pairs=" + authorIndex1.numPairs + " recall=" + authorIndex1.getRecall(cluster2ids, id2mention))
-    println("#title1Pairs=" + titleIndex1.numPairs + " recall=" + titleIndex1.getRecall(cluster2ids, id2mention))
-    println("#unionPairs=" + unionIndex1.numPairs + " recall=" + unionIndex1.getRecall(cluster2ids, id2mention, false))
+    logger.info("#author1Pairs=" + authorIndex1.numPairs + " recall=" + authorIndex1.getRecall(cluster2ids, id2mention))
+    logger.info("#title1Pairs=" + titleIndex1.numPairs + " recall=" + titleIndex1.getRecall(cluster2ids, id2mention))
+    logger.info("#unionPairs=" + unionIndex1.numPairs + " recall=" + unionIndex1.getRecall(cluster2ids, id2mention, false))
 
     unionIndex1
   }
@@ -65,7 +67,7 @@ object RexaApp extends AbstractAlign {
       id2mention(m.id) = m
       // id2example(m.id) = new FeatMentionExample(m.id, m.isRecord, m.words, featSeq, trueSeg)
       numMentions += 1
-      if (numMentions % 1000 == 0) println("Processed " + numMentions + "/" + maxMentions)
+      if (numMentions % 1000 == 0) logger.info("Processed " + numMentions + "/" + maxMentions)
     }
 
     val id2cluster = FileHelper.getMentionClusters(args(2))
@@ -75,6 +77,6 @@ object RexaApp extends AbstractAlign {
     val blocker = getBlocker(rawMentions, id2mention, cluster2ids)
 
     // 2. Find for the set of records that are candidate matches for each text
-    println("#maxMatched=" + getMaxRecordsMatched(rawTexts, rawRecords, blocker))
+    logger.info("#maxMatched=" + getMaxRecordsMatched(rawTexts, rawRecords, blocker))
   }
 }
