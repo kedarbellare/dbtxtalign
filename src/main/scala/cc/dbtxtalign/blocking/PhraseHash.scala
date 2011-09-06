@@ -12,12 +12,14 @@ object PhraseHash {
 
   def noHash(phrase: Seq[String]): HashSet[String] = _noHash
 
-  private def normalize(s: String): String =
-    s.replaceAll("[^A-Za-z0-9]+", " ")
+  private def normalize(s: String): String = {
+    if (s.startsWith("$") && s.endsWith("$")) s
+    else s.replaceAll("[^A-Za-z0-9]+", " ")
       .replaceAll("^\\s+", "")
       .replaceAll("\\s+$", "")
       .replaceAll("\\s+", " ")
       .toLowerCase
+  }
 
   def ngramWordHash(orig_phrase: Seq[String], n: Int): HashSet[String] = {
     val grams = new HashSet[String]

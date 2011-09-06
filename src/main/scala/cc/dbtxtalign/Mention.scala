@@ -54,4 +54,8 @@ class Mention(val id: String, val isRecord: Boolean, val words: Seq[String], val
 
   def extractTrueWordsFor(label: String): Seq[String] =
     extractTrueSegmentsFor(label).flatMap(identity(_))
+
+  override def toString = (if (isRecord) "record[" else "text[") + id + "]\n" +
+    words.mkString(" ") + "\n" +
+    trueBioLabels.mkString(" ") + "\n"
 }

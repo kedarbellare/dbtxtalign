@@ -1,15 +1,15 @@
 package cc.dbtxtalign
 
 import blocking.{AbstractBlocker, UnionIndexBlocker, InvertedIndexBlocker, PhraseHash}
-import collection.mutable.HashMap
 import cc.refectorie.user.kedarb.dynprog.types.Indexer
 import cc.refectorie.user.kedarb.dynprog.segment.Segmentation
+import collection.mutable.{ArrayBuffer, HashMap}
 
 /**
  * @author kedar
  */
 
-object BFTApp {
+object BFTApp extends AbstractAlign {
   val MONTH = "(?:january|february|march|april|may|june|july|august|september|october|november|december|" +
     "jan|feb|apr|jun|jul|aug|sep|sept|oct|nov|dec)"
   val DOTW = "(?:mon|tues?|wed(?:nes)?|thurs?|fri|satu?r?|sun)(?:day)?"
@@ -62,49 +62,29 @@ object BFTApp {
   def main(args: Array[String]) {
     val labelIndexer = new Indexer[String]
     val featureIndexer = new Indexer[String]
-    val maxLengthMap = new HashMap[Int, Int]
+    val maxLengths = new ArrayBuffer[Int]
 
-    val rawRecords = FileHelper.getRawMentions(true, args(0), simplify(_))
-    val rawTexts = FileHelper.getRawMentions(false, args(1), simplify(_))
+    val rawRecords = FileHelper.getRawMentions(true, args(0))
+    val rawTexts = FileHelper.getRawMentions(false, args(1))
     val rawMentions = rawRecords ++ rawTexts
     println("#records=" + rawRecords.size + " #texts=" + rawTexts.size)
+
     val id2mention = new HashMap[String, Mention]
     val id2example = new HashMap[String, FeatMentionExample]
     for (m <- rawMentions) {
-      val featSeq = m.words.map(featureIndexer.indexOf_!(_))
-      val trueSeg = Segmentation.fromBIO(m.trueBioLabels, labelIndexer.indexOf_!(_))
-      if (m.isRecord) {
-        trueSeg.segments.foreach(s => {
-          maxLengthMap(s.label) = math.max(s.end - s.begin, maxLengthMap.getOrElse(s.label, 0))
-        })
-      }
+      val featSeq = getFeatureSequence_!(m, featureIndexer, simplify(_))
+      val trueSeg = getSegmentationAndMaxLength_!(m, labelIndexer, maxLengths)
       id2mention(m.id) = m
       id2example(m.id) = new FeatMentionExample(m.id, m.isRecord, m.words, featSeq, trueSeg)
     }
 
-    val maxLengths = Array.ofDim[Int](labelIndexer.size)
-    for (l <- 0 until labelIndexer.size) maxLengths(l) = maxLengthMap.getOrElse(l, 1)
-    // update max lengths if needed
-    
     val id2cluster = FileHelper.getMentionClusters(args(2))
-    val cluster2ids = new HashMap[String, Seq[String]]
-    for ((id, cluster) <- id2cluster) cluster2ids(cluster) = cluster2ids.getOrElse(cluster, Seq.empty[String]) ++ Seq(id)
-    
+    val cluster2ids = getClusterToIds(id2cluster)
+
     // 1. Calculate candidate pairs using hotelname and localarea
-    val unionIndex1 = getBlocker(rawMentions, id2mention, cluster2ids)
+    val blocker = getBlocker(rawMentions, id2mention, cluster2ids)
 
     // 2. Find for the set of records that are candidate matches for each text
-    var maxRecordsMatched = 0
-    for (m <- rawTexts) {
-      // println("text[" + m.id + "][cluster=" + id2cluster.getOrElse(m.id, "") + "]: " + m.words.mkString(" "))
-      var numRecords = 0
-      for (r <- rawRecords if unionIndex1.isPair(m.id, r.id)) {
-        numRecords += 1
-        // println("\trecord[" + r.id + "][cluster=" + id2cluster.getOrElse(r.id, "") + "]: " + r.words.mkString(" "))
-      }
-      if (maxRecordsMatched < numRecords) maxRecordsMatched = numRecords
-      // println("\t#recordsMatched=" + numRecords)
-    }
-    println("#maxMatched=" + maxRecordsMatched)
+    println("#maxMatched=" + getMaxRecordsMatched(rawTexts, rawRecords, blocker))
   }
 }
