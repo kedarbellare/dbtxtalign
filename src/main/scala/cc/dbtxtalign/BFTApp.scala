@@ -69,7 +69,7 @@ object BFTApp extends AbstractAlign {
     val id2mention = new HashMap[String, Mention]
     val id2example = new HashMap[String, FeatMentionExample]
     for (m <- rawMentions) {
-      val featSeq = getFeatureSequence_!(m, featureIndexer, simplify(_))
+      val featSeq = getFeatureSequence_!(m, wordFeatureIndexer, simplify(_))
       val trueSeg = getSegmentationAndMaxLength_!(m, labelIndexer, maxLengths)
       id2mention(m.id) = m
       id2example(m.id) = new FeatMentionExample(m.id, m.isRecord, m.words, featSeq, trueSeg)

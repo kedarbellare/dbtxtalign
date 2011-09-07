@@ -16,7 +16,9 @@ import org.apache.log4j.Logger
 
 
 trait AbstractAlign {
+  val wordIndexer = new Indexer[String]
   val labelIndexer = new Indexer[String]
+  val wordFeatureIndexer = new Indexer[String]
   val featureIndexer = new Indexer[String]
   val maxLengths = new ArrayBuffer[Int]
   val otherLabelIndex = labelIndexer.indexOf_!("O")
@@ -149,13 +151,13 @@ trait AbstractAlign {
   // Learning functions
   // 1. Segment HMM trained with EM
   def learnEMSegmentParamsHMM(numIter: Int, examples: Seq[FeatMentionExample],
-                                  unlabeledWeight: Double, smoothing: Double): SegmentParams = {
-    var segparams = newSegmentParams(true, true, labelIndexer, featureIndexer)
+                              unlabeledWeight: Double, smoothing: Double): SegmentParams = {
+    var segparams = newSegmentParams(true, true, labelIndexer, wordFeatureIndexer)
     segparams.setUniform_!
     segparams.normalize_!(smoothing)
 
     for (iter <- 1 to 20) {
-      val segcounts = newSegmentParams(true, true, labelIndexer, featureIndexer)
+      val segcounts = newSegmentParams(true, true, labelIndexer, wordFeatureIndexer)
       var loglike = 0.0
       for (ex <- examples) {
         val stepSize = if (ex.isRecord) 1 else unlabeledWeight

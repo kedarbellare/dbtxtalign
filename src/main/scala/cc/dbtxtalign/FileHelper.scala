@@ -2,12 +2,16 @@ package cc.dbtxtalign
 
 import io.Source
 import collection.mutable.{HashMap, ArrayBuffer}
+import org.apache.log4j.Logger
 
 /**
  * @author kedar
  */
 
 object FileHelper {
+  val logger = Logger.getLogger(this.getClass.getSimpleName)
+  val debugNumMentions = 1000
+
   def getRawMentions(isRecord: Boolean, filename: String, simplify: (String) => String = identity(_)): Seq[Mention] = {
     val buff = new ArrayBuffer[Mention]
     val lineIter = Source.fromFile(filename).getLines()
@@ -18,7 +22,9 @@ object FileHelper {
       // empty line
       lineIter.next()
       buff += new Mention(id, isRecord, words, bioLabels)
+      if (buff.size % debugNumMentions == 0) logger.info("#mentions=" + buff.size)
     }
+    logger.info("Finished #mentions=" + buff.size)
     buff.toSeq
   }
 
