@@ -106,14 +106,16 @@ trait AbstractAlign {
   }
 
   def getSegmentationAndMaxLength_!(m: Mention, indexer: Indexer[String], maxLengths: ArrayBuffer[Int]): Segmentation = {
+    val useOracle = true
     val trueSeg = getSegmentation_!(m, indexer)
     // default length is 1
     while (indexer.size != maxLengths.size) maxLengths += 1
     // accumulate max lengths overall
     // TODO (cheating oracle!)
-    trueSeg.segments.filter(_.label != otherLabelIndex).foreach(s => {
-      maxLengths(s.label) = math.max(s.end - s.begin, maxLengths(s.label))
-    })
+    if (useOracle || m.isRecord)
+      trueSeg.segments.filter(_.label != otherLabelIndex).foreach(s => {
+        maxLengths(s.label) = math.max(s.end - s.begin, maxLengths(s.label))
+      })
     trueSeg
   }
 
