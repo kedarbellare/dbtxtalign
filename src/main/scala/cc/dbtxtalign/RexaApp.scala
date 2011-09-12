@@ -3,6 +3,7 @@ package cc.dbtxtalign
 import blocking.{AbstractBlocker, PhraseHash, InvertedIndexBlocker, UnionIndexBlocker}
 import collection.mutable.HashMap
 import org.apache.log4j.Logger
+import cc.refectorie.user.kedarb.dynprog.utils.Utils
 
 /**
  * @author kedar
@@ -51,6 +52,25 @@ object RexaApp extends AbstractAlign {
     unionIndex1
   }
 
+  def isPossibleEnd(j: Int, words: Seq[String]): Boolean = {
+    val endsOnPunc = "^.*[^A-Za-z0-9\\-]$"
+    val startsWithPunc = "^[^A-Za-z0-9\\-].*$"
+    val endsWithAlpha = "^.*[A-Za-z]$"
+    val endsWithNum = "^.*[0-9]$"
+    val startsWithAlpha = "^[A-Za-z].*$"
+    val startsWithNum = "^[0-9].*$"
+    val endsOnSpecial = "^(and|et\\.?|vol\\.?|no\\.?|pp\\.?|pages)$"
+    // info("calling isEnd('" + words(j - 1) + "'): " + words.mkString(" "))
+    if (j == 0) false
+    else j == words.length ||
+      words(j - 1).matches(endsOnPunc) || // word ends on punctuation
+      words(j).matches(startsWithPunc) || // words begins with punctuation
+      words(j - 1).toLowerCase.matches(endsOnSpecial) || // "<s>X</s> and <s>Y</s>"
+      words(j).toLowerCase.matches(endsOnSpecial) || // "<s>X</s> and <s>Y</s>"
+      (words(j - 1).matches(endsWithAlpha) && words(j).matches(startsWithNum)) || // alpha -> num
+      (words(j - 1).matches(endsWithNum) && words(j).matches(startsWithAlpha)) // num -> alpha
+  }
+
   def main(args: Array[String]) {
     val rawRecords = FileHelper.getRawMentions(true, args(0))
     val rawTexts = FileHelper.getRawMentions(false, args(1))
@@ -58,25 +78,31 @@ object RexaApp extends AbstractAlign {
     println("#records=" + rawRecords.size + " #texts=" + rawTexts.size)
 
     val id2mention = new HashMap[String, Mention]
-    // val id2example = new HashMap[String, FeatMentionExample]
+    val id2example = new HashMap[String, FeatMentionExample]
     var numMentions = 0
     val maxMentions = rawMentions.size
     for (m <- rawMentions) {
-      // val featSeq = m.words.map(featureIndexer.indexOf_!(_))
+      val featSeq = getFeatureSequence_!(m, wordFeatureIndexer, simplify(_))
       val trueSeg = getSegmentationAndMaxLength_!(m, labelIndexer, maxLengths)
+      val possibleEnds = Utils.mapIndex(m.words.length + 1, (j: Int) => RexaApp.isPossibleEnd(j, m.words))
       id2mention(m.id) = m
-      // id2example(m.id) = new FeatMentionExample(m.id, m.isRecord, m.words, featSeq, trueSeg)
+      id2example(m.id) = new FeatMentionExample(m.id, m.isRecord, m.words, possibleEnds, featSeq, trueSeg)
       numMentions += 1
       if (numMentions % 1000 == 0) logger.info("Processed " + numMentions + "/" + maxMentions)
     }
 
     val id2cluster = FileHelper.getMentionClusters(args(2))
     val cluster2ids = getClusterToIds(id2cluster)
+    val examples = id2example.values.toSeq
 
     // 1. calculate candidate pairs using author and title
     val blocker = getBlocker(rawMentions, id2mention, cluster2ids)
 
     // 2. Find for the set of records that are candidate matches for each text
     logger.info("#maxMatched=" + getMaxRecordsMatched(rawTexts, rawRecords, blocker))
+
+    // 3. Segment HMM baseline
+    val segparams = learnEMSegmentParamsHMM(20, examples, 1e-2, 1e-2)
+    decodeSegmentParamsHMM("rexa.hmm.true.txt", "rexa.hmm.pred.txt", examples, segparams)
   }
 }

@@ -3,6 +3,7 @@ package cc.dbtxtalign
 import blocking.{AbstractBlocker, UnionIndexBlocker, InvertedIndexBlocker, PhraseHash}
 import collection.mutable.HashMap
 import org.apache.log4j.Logger
+import cc.refectorie.user.kedarb.dynprog.utils.Utils
 
 /**
  * @author kedar
@@ -71,8 +72,9 @@ object BFTApp extends AbstractAlign {
     for (m <- rawMentions) {
       val featSeq = getFeatureSequence_!(m, wordFeatureIndexer, simplify(_))
       val trueSeg = getSegmentationAndMaxLength_!(m, labelIndexer, maxLengths)
+      val possibleEnds = Utils.mapIndex(m.words.length + 1, (j: Int) => true)
       id2mention(m.id) = m
-      id2example(m.id) = new FeatMentionExample(m.id, m.isRecord, m.words, featSeq, trueSeg)
+      id2example(m.id) = new FeatMentionExample(m.id, m.isRecord, m.words, possibleEnds, featSeq, trueSeg)
     }
 
     val id2cluster = FileHelper.getMentionClusters(args(2))

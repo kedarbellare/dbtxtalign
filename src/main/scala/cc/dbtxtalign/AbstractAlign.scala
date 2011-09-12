@@ -158,15 +158,18 @@ trait AbstractAlign {
     segparams.setUniform_!
     segparams.normalize_!(smoothing)
 
-    for (iter <- 1 to 20) {
+    for (iter <- 1 to numIter) {
       val segcounts = newSegmentParams(true, true, labelIndexer, wordFeatureIndexer)
       var loglike = 0.0
+      var exnum = 0
       for (ex <- examples) {
         val stepSize = if (ex.isRecord) 1 else unlabeledWeight
         val inferencer = new HMMSegmentationInferencer(labelIndexer, maxLengths, ex, segparams, segcounts,
           InferSpec(iter, 1, false, ex.isRecord, false, false, true, false, 1, stepSize))
         loglike += inferencer.logZ
         inferencer.updateCounts
+        exnum += 1
+        if (exnum % 100 == 0) logger.info("Processed " + exnum + "/" + examples.size)
       }
       logger.info("*** iteration[" + iter + "] loglike=" + loglike)
       segcounts.normalize_!(smoothing)

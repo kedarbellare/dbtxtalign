@@ -13,11 +13,11 @@ trait AFeatAlignmentMentionExample[Feature] extends AFeatMentionExample[Feature]
 }
 
 class FeatAlignmentMentionExample(val id: String, val isRecord: Boolean, val words: Seq[String],
-                                  val featSeq: Seq[Int], val trueSegmentation: Segmentation,
-                                  val otherIds: Seq[String])
+                                  val possibleEnds: Seq[Boolean], val featSeq: Seq[Int],
+                                  val trueSegmentation: Segmentation, val otherIds: Seq[String])
   extends AFeatAlignmentMentionExample[Int]
 
 class FeatVecAlignmentMentionExample(val id: String, val isRecord: Boolean, val words: Seq[String],
-                                     val featSeq: Seq[FtrVec], val trueSegmentation: Segmentation,
-                                     val otherIds: Seq[String])
+                                     val possibleEnds: Seq[Boolean], val featSeq: Seq[FtrVec],
+                                     val trueSegmentation: Segmentation, val otherIds: Seq[String])
   extends AFeatAlignmentMentionExample[FtrVec]
