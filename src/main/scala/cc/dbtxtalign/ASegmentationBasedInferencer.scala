@@ -30,6 +30,8 @@ trait ASegmentationBasedInferencer[Feature, Example <: AFeatMentionExample[Featu
 
   lazy val trueSegmentation: Segmentation = ex.trueSegmentation
 
+  lazy val trueLabelDefined = mapIndex(N, (i: Int) => trueSegmentation.labelAt(i).isDefined)
+
   lazy val cachedEmissionScores: Array[Array[Double]] = mapIndex(L, (l: Int) => mapIndex(N, (n: Int) => Double.NaN))
 
   lazy val cachedEmissionCounts: Array[Array[Double]] = mapIndex(L, (l: Int) => mapIndex(N, (n: Int) => 0.0))
@@ -40,8 +42,15 @@ trait ASegmentationBasedInferencer[Feature, Example <: AFeatMentionExample[Featu
   def newWidget = new Segmentation(N)
 
   def allowedSegment(a: Int, i: Int, j: Int): Boolean = {
-    if (trueInfer) trueSegmentation.contains(Segment(i, j, a))
-    else {
+    if (trueInfer) {
+      if (trueSegmentation.contains(Segment(i, j, a))) true
+      else {
+        forIndex(i, j, (k: Int) => {
+          if (trueLabelDefined(k)) return false
+        })
+        true
+      }
+    } else {
       if (isRecord) {
         // only allow sub-segments that are a subset of segment at i
         val optionSegmentAtI = trueSegmentation.segmentAt(i)

@@ -1,9 +1,12 @@
 package cc.dbtxtalign
 
-import blocking.{AbstractBlocker, UnionIndexBlocker, InvertedIndexBlocker, PhraseHash}
+import cc.refectorie.user.kedarb.dynprog.utils.Utils._
 import collection.mutable.HashMap
 import org.apache.log4j.Logger
-import cc.refectorie.user.kedarb.dynprog.utils.Utils
+import blocking.{AbstractBlocker, UnionIndexBlocker, InvertedIndexBlocker, PhraseHash}
+import phrasematch._
+import cc.refectorie.user.kedarb.dynprog.InferSpec
+import cc.refectorie.user.kedarb.dynprog.segment.Segmentation
 
 /**
  * @author kedar
@@ -72,7 +75,7 @@ object BFTApp extends AbstractAlign {
     for (m <- rawMentions) {
       val featSeq = getFeatureSequence_!(m, wordFeatureIndexer, simplify(_))
       val trueSeg = getSegmentationAndMaxLength_!(m, labelIndexer, maxLengths)
-      val possibleEnds = Utils.mapIndex(m.words.length + 1, (j: Int) => true)
+      val possibleEnds = mapIndex(m.words.length + 1, (j: Int) => true)
       id2mention(m.id) = m
       id2example(m.id) = new FeatMentionExample(m.id, m.isRecord, m.words, possibleEnds, featSeq, trueSeg)
     }
@@ -88,7 +91,47 @@ object BFTApp extends AbstractAlign {
     logger.info("#maxMatched=" + getMaxRecordsMatched(rawTexts, rawRecords, blocker))
 
     // 3. Segment HMM baseline
-    val segparams = learnEMSegmentParamsHMM(20, examples, 1e-2, 1e-2)
-    decodeSegmentParamsHMM("bft.hmm.true.txt", "bft.hmm.pred.txt", examples, segparams)
+    // val segparams = learnEMSegmentParamsHMM(20, examples, 1e-2, 1e-2)
+    // decodeSegmentParamsHMM("bft.hmm.true.txt", "bft.hmm.pred.txt", examples, segparams)
+
+    // 4. WWT phase1 segment
+    val approxMatchers = mapIndex(L, (l: Int) => {
+      val lbl = labelIndexer(l)
+      if (lbl == "O") new NoopScorer(0).score(_, _)
+      else if (lbl == "hotelname") new SoftJaccardScorer(0.85).score(_, _)
+      else if (lbl == "localarea") new SoftJaccardScorer(0.85).score(_, _)
+      else new NoopScorer(0).score(_, _)
+    })
+    val approxMatchThresholds = mapIndex(L, (l: Int) => {
+      val lbl = labelIndexer(l)
+      if (lbl == "O") 0.0
+      else if (lbl == "hotelname") 0.1
+      else if (lbl == "localarea") 0.1
+      else 0.0
+    })
+    val segparams = newSegmentParams(true, true, labelIndexer, wordFeatureIndexer)
+    val segcounts = newSegmentParams(true, true, labelIndexer, wordFeatureIndexer)
+    segparams.setUniform_!
+    segparams.normalize_!(1e-2)
+
+    val textExamples = (for (ex <- examples if !ex.isRecord) yield ex).toSeq
+    val recordExamples = (for (ex <- examples if ex.isRecord) yield ex).toSeq
+    for (ex1 <- textExamples.take(10)) {
+      println()
+      println("words: " + ex1.words.mkString(" "))
+      println("segmentation: " + ex1.trueSegmentation)
+      val clust1 = id2cluster.getOrElse(ex1.id, "NULL")
+      for (ex2 <- recordExamples if blocker.isPair(ex1.id, ex2.id)) {
+        val ex = new FeatAlignmentMentionExample(ex1.id, ex1.isRecord, ex1.words, ex1.possibleEnds, ex1.featSeq,
+          ex1.trueSegmentation, ex2.words, ex2.trueSegmentation)
+        val hmmSegMatch = new HMMSegmentAndMatch(labelIndexer, maxLengths, approxMatchers, approxMatchThresholds,
+          ex, segparams, segcounts, InferSpec(0, 1, false, false, true, false, true, false, 1, 0))
+        println()
+        println("\tmatchScore: " + hmmSegMatch.logVZ + " clusterMatch: " + (clust1 == id2cluster(ex2.id)))
+        println("\trecordWords: " + ex2.words.mkString(" "))
+        println("\trecordSegmentation: " + ex2.trueSegmentation)
+        println("\tmatchSegmentation: " + hmmSegMatch.bestWidget)
+      }
+    }
   }
 }

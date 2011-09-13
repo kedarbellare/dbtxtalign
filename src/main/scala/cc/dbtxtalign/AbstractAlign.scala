@@ -26,6 +26,14 @@ trait AbstractAlign {
   def logger: Logger
 
   def simplify(s: String): String
+  
+  def L = labelIndexer.size
+
+  def W = wordIndexer.size
+
+  def WF = wordFeatureIndexer.size
+
+  def F = featureIndexer.size
 
   def adjustSegmentation(words: Seq[String], segmentation: Segmentation): Segmentation = {
     val adjSegmentation = new Segmentation(segmentation.length)
@@ -169,7 +177,7 @@ trait AbstractAlign {
         loglike += inferencer.logZ
         inferencer.updateCounts
         exnum += 1
-        if (exnum % 100 == 0) logger.info("Processed " + exnum + "/" + examples.size)
+        if (exnum % 1000 == 0) logger.info("Processed " + exnum + "/" + examples.size)
       }
       logger.info("*** iteration[" + iter + "] loglike=" + loglike)
       segcounts.normalize_!(smoothing)
