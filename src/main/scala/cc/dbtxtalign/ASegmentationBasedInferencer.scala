@@ -1,19 +1,17 @@
 package cc.dbtxtalign
 
-import cc.refectorie.user.kedarb.dynprog.utils.Utils._
+import cc.refectorie.user.kedarb.dynprog.{AHypergraphInferState, AParams}
 import cc.refectorie.user.kedarb.dynprog.segment.{Segment, Segmentation}
-import cc.refectorie.user.kedarb.dynprog.{InferSpec, AHypergraphInferState}
-import params.SegmentParams
-import cc.refectorie.user.kedarb.dynprog.types.{FtrVec, Hypergraph, Indexer}
+import cc.refectorie.user.kedarb.dynprog.types.{ParamVec, Indexer}
+import cc.refectorie.user.kedarb.dynprog.utils.Utils._
 
 /**
  * @author kedar
  */
 
-trait ASegmentationBasedInferencer[Feature, Example <: AFeatMentionExample[Feature]]
-  extends AHypergraphInferState[Segmentation, Example, SegmentParams] {
-  type Widget = Segmentation
 
+trait ASegmentationBasedInferencer[Feature, Widget, Example <: AFeatSegmentationExample[Feature, Widget], Params <: AParams]
+  extends AHypergraphInferState[Widget, Example, Params] {
   def labelIndexer: Indexer[String]
 
   def maxLengths: Seq[Int]
@@ -38,28 +36,27 @@ trait ASegmentationBasedInferencer[Feature, Example <: AFeatMentionExample[Featu
 
   lazy val cachedPossibleEnds: Array[Boolean] = mapIndex(N + 1, (j: Int) => ex.isPossibleEnd(j))
 
-  // allowed segment for span [i, j) for label a
-  def newWidget = new Segmentation(N)
+  def allowedSegmentTruth(a: Int, i: Int, j: Int): Boolean = {
+    if (trueSegmentation.contains(Segment(i, j, a))) true
+    else {
+      forIndex(i, j, (k: Int) => {
+        if (trueLabelDefined(k)) return false
+      })
+      true
+    }
+  }
 
   def allowedSegment(a: Int, i: Int, j: Int): Boolean = {
     if (trueInfer) {
-      if (trueSegmentation.contains(Segment(i, j, a))) true
-      else {
-        forIndex(i, j, (k: Int) => {
-          if (trueLabelDefined(k)) return false
-        })
-        true
-      }
+      allowedSegmentTruth(a, i, j)
+    } else if (isRecord) {
+      // only allow sub-segments that are a subset of segment at i
+      val optionSegmentAtI = trueSegmentation.segmentAt(i)
+      optionSegmentAtI.isDefined && optionSegmentAtI.get.end >= j &&
+        (a == otherLabelIndex || cachedPossibleEnds(j) || optionSegmentAtI.get.end == j)
     } else {
-      if (isRecord) {
-        // only allow sub-segments that are a subset of segment at i
-        val optionSegmentAtI = trueSegmentation.segmentAt(i)
-        optionSegmentAtI.isDefined && optionSegmentAtI.get.end >= j &&
-          (a == otherLabelIndex || cachedPossibleEnds(j) || optionSegmentAtI.get.end == j)
-      } else {
-        // allow all possible segments
-        a == otherLabelIndex || cachedPossibleEnds(j)
-      }
+      // allow all possible segments
+      a == otherLabelIndex || cachedPossibleEnds(j)
     }
   }
 
@@ -67,17 +64,21 @@ trait ASegmentationBasedInferencer[Feature, Example <: AFeatMentionExample[Featu
 
   def allowedTransition(a: Int, b: Int): Boolean = true
 
-  def transitionParams = params.transitions.transitions
+  def transitionParams: Array[ParamVec] = throw fail("Not implemented!")
 
-  def transitionCounts = counts.transitions.transitions
+  def transitionCounts: Array[ParamVec] = throw fail("Not implemented!")
 
-  def startParams = params.transitions.starts
+  def startParams: ParamVec = throw fail("Not implemented!")
 
-  def startCounts = counts.transitions.starts
+  def startCounts: ParamVec = throw fail("Not implemented!")
 
-  def emissionParams = params.emissions.emissions
+  def emissionParams: Array[ParamVec] = throw fail("Not implemented!")
 
-  def emissionCounts = counts.emissions.emissions
+  def emissionCounts: Array[ParamVec] = throw fail("Not implemented!")
+
+  def alignParams: Array[ParamVec] = throw fail("Not implemented!")
+
+  def alignCounts: Array[ParamVec] = throw fail("Not implemented!")
 
   def scoreTransition(a: Int, b: Int, i: Int, j: Int): Double = {
     if (isRecord) 0.0
@@ -116,93 +117,25 @@ trait ASegmentationBasedInferencer[Feature, Example <: AFeatMentionExample[Featu
     forIndex(i, j, (k: Int) => updateSingleEmission(a, k, x))
   }
 
-  def updateSingleEmissionCached(a: Int, k: Int, x: Double): Unit
+  def updateSingleEmissionCached(a: Int, k: Int, x: Double)
 
-  def createHypergraph(H: Hypergraph[Segmentation]) {
-    def gen(a: Int, i: Int): Object = {
-      if (i == N) H.endNode
-      else {
-        val node = (a, i)
-        if (H.addSumNode(node)) {
-          forIndex(L, (b: Int) => {
-            forIndex(i + 1, math.min(i + maxLengths(b), N) + 1, (j: Int) => {
-              if (allowedTransition(a, b) && allowedSegment(b, i, j)) {
-                H.addEdge(node, gen(b, j), new Info {
-                  def getWeight = scoreTransition(a, b, i, j) + scoreEmission(b, i, j)
-
-                  def setPosterior(v: Double) {
-                    updateTransition(a, b, i, j, v)
-                    updateEmission(b, i, j, v)
-                  }
-
-                  def choose(widget: Widget) = {
-                    val seg = Segment(i, j, b)
-                    require(widget.append(seg), "Could not add segment: " + seg)
-                    widget
-                  }
-                })
-              }
-            })
-          })
-        }
-        node
-      }
-    }
-
+  def genStartSegments(addStartEdge: Segment => Any) {
     forIndex(L, (a: Int) => {
       forIndex(1, math.min(maxLengths(a), N) + 1, (i: Int) => {
         if (allowedStart(a) && allowedSegment(a, 0, i)) {
-          H.addEdge(H.sumStartNode, gen(a, i), new Info {
-            def getWeight = scoreStart(a, i) + scoreEmission(a, 0, i)
-
-            def setPosterior(v: Double) {
-              updateStart(a, i, v)
-              updateEmission(a, 0, i, v)
-            }
-
-            def choose(widget: Widget) = {
-              val seg = Segment(0, i, a)
-              require(widget.append(seg), "Could not add segment: " + seg)
-              widget
-            }
-          })
+          addStartEdge(Segment(0, i, a))
         }
       })
     })
   }
 
-  override def updateCounts {
-    super.updateCounts
-    counts.synchronized {
-      forIndex(L, (a: Int) => {
-        forIndex(N, (k: Int) => {
-          updateSingleEmissionCached(a, k, cachedEmissionCounts(a)(k))
-        })
+  def genTransitionSegments(a: Int, i: Int, addTransitionEdge: Segment => Any) {
+    forIndex(L, (b: Int) => {
+      forIndex(i + 1, math.min(i + maxLengths(b), N) + 1, (j: Int) => {
+        if (allowedTransition(a, b) && allowedSegment(b, i, j)) {
+          addTransitionEdge(Segment(i, j, b))
+        }
       })
-    }
-  }
-}
-
-class HMMSegmentationInferencer(val labelIndexer: Indexer[String], val maxLengths: Seq[Int], val ex: FeatMentionExample,
-                                val params: SegmentParams, val counts: SegmentParams, val ispec: InferSpec)
-  extends ASegmentationBasedInferencer[Int, FeatMentionExample] {
-  lazy val featSeq: Seq[Int] = ex.featSeq
-
-  def scoreSingleEmission(a: Int, k: Int) = score(emissionParams(a), featSeq(k))
-
-  def updateSingleEmissionCached(a: Int, k: Int, x: Double) {
-    update(emissionCounts(a), featSeq(k), x)
-  }
-}
-
-class CRFSegmentationInferencer(val labelIndexer: Indexer[String], val maxLengths: Seq[Int], val ex: FeatVecMentionExample,
-                                val params: SegmentParams, val counts: SegmentParams, val ispec: InferSpec)
-  extends ASegmentationBasedInferencer[FtrVec, FeatVecMentionExample] {
-  lazy val featSeq: Seq[FtrVec] = ex.featSeq
-
-  def scoreSingleEmission(a: Int, k: Int) = score(emissionParams(a), featSeq(k))
-
-  def updateSingleEmissionCached(a: Int, k: Int, x: Double) {
-    update(emissionCounts(a), featSeq(k), x)
+    })
   }
 }

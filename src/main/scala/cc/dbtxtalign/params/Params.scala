@@ -97,3 +97,9 @@ class Params(val transitions: TransitionParams, val emissions: EmissionParams, v
     aligns.foreachVec(f)
   }
 }
+
+object NoopParams extends AParams {
+  def foreachVec(f: (ParamVec) => Any) {}
+
+  def output(puts: (String) => Any) {}
+}

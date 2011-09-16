@@ -64,6 +64,10 @@ object BFTApp extends AbstractAlign {
     unionIndex1
   }
 
+  def approxTokenMatcher(t1: String, t2: String): Boolean = {
+    ObjectStringScorer.getThresholdLevenshtein(t1, t2, 2) <= 1 || ObjectStringScorer.getJaroWinklerScore(t1, t2) >= 0.95
+  }
+
   def main(args: Array[String]) {
     val rawRecords = FileHelper.getRawMentions(true, args(0))
     val rawTexts = FileHelper.getRawMentions(false, args(1))
@@ -98,16 +102,16 @@ object BFTApp extends AbstractAlign {
     val approxMatchers = mapIndex(L, (l: Int) => {
       val lbl = labelIndexer(l)
       if (lbl == "O") new NoopScorer(0).score(_, _)
-      else if (lbl == "hotelname") new SoftJaccardScorer(0.85).score(_, _)
-      else if (lbl == "localarea") new SoftJaccardScorer(0.85).score(_, _)
-      else new NoopScorer(0).score(_, _)
+      else if (lbl == "hotelname") new FuzzyJaccardScorer(approxTokenMatcher).score(_, _)
+      else if (lbl == "localarea") new FuzzyJaccardScorer(approxTokenMatcher).score(_, _)
+      else new SoftJaccardScorer(0.95).score(_, _)
     })
     val approxMatchThresholds = mapIndex(L, (l: Int) => {
       val lbl = labelIndexer(l)
       if (lbl == "O") 0.0
-      else if (lbl == "hotelname") 0.1
-      else if (lbl == "localarea") 0.1
-      else 0.0
+      else if (lbl == "hotelname") 0.8
+      else if (lbl == "localarea") 0.8
+      else 0.99
     })
     val segparams = newSegmentParams(true, true, labelIndexer, wordFeatureIndexer)
     val segcounts = newSegmentParams(true, true, labelIndexer, wordFeatureIndexer)
@@ -116,22 +120,31 @@ object BFTApp extends AbstractAlign {
 
     val textExamples = (for (ex <- examples if !ex.isRecord) yield ex).toSeq
     val recordExamples = (for (ex <- examples if ex.isRecord) yield ex).toSeq
-    for (ex1 <- textExamples.take(10)) {
-      println()
-      println("words: " + ex1.words.mkString(" "))
-      println("segmentation: " + ex1.trueSegmentation)
+    val approxSumMatchThreshold = approxMatchThresholds.foldLeft(0.0)(_ + _)
+
+    println("=====================================================================================")
+    for (ex1 <- textExamples) {
       val clust1 = id2cluster.getOrElse(ex1.id, "NULL")
+      var foundMatch = false
       for (ex2 <- recordExamples if blocker.isPair(ex1.id, ex2.id)) {
-        val ex = new FeatAlignmentMentionExample(ex1.id, ex1.isRecord, ex1.words, ex1.possibleEnds, ex1.featSeq,
-          ex1.trueSegmentation, ex2.words, ex2.trueSegmentation)
-        val hmmSegMatch = new HMMSegmentAndMatch(labelIndexer, maxLengths, approxMatchers, approxMatchThresholds,
+        val ex = new FeatMatchOnlyMentionExample(ex1.id, ex1.isRecord, ex1.words, ex1.possibleEnds, ex1.featSeq,
+          ex1.trueSegmentation, ex2.id, ex2.words, ex2.trueSegmentation)
+        val hmmSegMatch = new HMMSegmentAndMatchWWT(labelIndexer, maxLengths, approxMatchers, approxMatchThresholds,
           ex, segparams, segcounts, InferSpec(0, 1, false, false, true, false, true, false, 1, 0))
-        println()
-        println("\tmatchScore: " + hmmSegMatch.logVZ + " clusterMatch: " + (clust1 == id2cluster(ex2.id)))
-        println("\trecordWords: " + ex2.words.mkString(" "))
-        println("\trecordSegmentation: " + ex2.trueSegmentation)
-        println("\tmatchSegmentation: " + hmmSegMatch.bestWidget)
+        if (hmmSegMatch.logVZ >= approxSumMatchThreshold) {
+          foundMatch = true
+          println()
+          println("matchScore: " + hmmSegMatch.logVZ + " clusterMatch: " + (clust1 == id2cluster(ex2.id)))
+          println("recordWords: " + ex2.words.mkString(" "))
+          println("recordSegmentation: " + ex2.trueSegmentation)
+          println("words: " + ex1.words.mkString(" "))
+          println("matchSegmentation: " + hmmSegMatch.bestWidget)
+          println("segmentation: " + ex1.trueSegmentation)
+        }
       }
+      
+      if (foundMatch)
+        println("=====================================================================================")
     }
   }
 }
