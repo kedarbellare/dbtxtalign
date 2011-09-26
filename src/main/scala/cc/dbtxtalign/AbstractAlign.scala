@@ -272,6 +272,53 @@ trait AbstractAlign {
     params
   }
 
+  def getHighPrecisionLabeledExamples(fvecExamples: Seq[FeatVecMentionExample],
+                                      blocker: AbstractBlocker,
+                                      approxMatchers: Seq[(Seq[String], Seq[String]) => Double],
+                                      approxMatchThresholds: Seq[Double],
+                                      id2cluster: HashMap[String, String]): Seq[FeatVecMentionExample] = {
+    val textExamples = (for (ex <- fvecExamples if !ex.isRecord) yield ex).toSeq
+    val recordExamples = (for (ex <- fvecExamples if ex.isRecord) yield ex).toSeq
+    val approxSumMatchThreshold = approxMatchThresholds.foldLeft(0.0)(_ + _)
+    var crfParams = newSegmentParams(false, true, labelIndexer, featureIndexer)
+    crfParams.setUniform_!
+
+    logger.info("=====================================================================================")
+    var numFoundMatch = 0
+    val hplExamples = new ArrayBuffer[FeatVecMentionExample]
+    hplExamples ++= recordExamples
+    for (ex1 <- textExamples) {
+      val clust1 = id2cluster.getOrElse(ex1.id, "NULL")
+      val matchedExamples = new ArrayBuffer[FeatVecMentionExample]
+      for (ex2 <- recordExamples if blocker.isPair(ex1.id, ex2.id)) {
+        val ex = new FeatVecMatchOnlyMentionExample(ex1.id, ex1.isRecord, ex1.words, ex1.possibleEnds, ex1.featSeq,
+          ex1.trueSegmentation, ex2.id, ex2.words, ex2.trueSegmentation)
+        val crfSegMatch = new CRFSegmentAndMatchWWT(labelIndexer, maxLengths, approxMatchers, approxMatchThresholds,
+          ex, crfParams, crfParams, InferSpec(0, 1, false, false, true, false, true, false, 1, 0))
+        if (crfSegMatch.logVZ >= approxSumMatchThreshold) {
+          logger.info("")
+          logger.info("matchScore: " + crfSegMatch.logVZ + " clusterMatch: " + (clust1 == id2cluster(ex2.id)))
+          logger.info("recordWords: " + ex2.words.mkString(" "))
+          logger.info("recordSegmentation: " + ex2.trueSegmentation)
+          logger.info("words: " + ex1.words.mkString(" "))
+          logger.info("matchSegmentation: " + crfSegMatch.bestWidget)
+          logger.info("segmentation: " + ex1.trueSegmentation)
+          matchedExamples += new FeatVecMentionExample(ex1.id, ex1.isRecord, ex1.words, ex1.possibleEnds,
+            ex1.featSeq, crfSegMatch.bestWidget)
+        }
+      }
+
+      if (matchedExamples.size == 1) {
+        logger.info("=====================================================================================")
+        hplExamples += matchedExamples(0)
+        numFoundMatch += 1
+      }
+    }
+    logger.info(numFoundMatch + "/" + textExamples.length)
+
+    hplExamples.toSeq
+  }
+
   def decodeSegmentParamsCRF(trueFilename: String, predFilename: String,
                              examples: Seq[FeatVecMentionExample], segparams: SegmentParams) {
     val trueOut = new PrintWriter(trueFilename)

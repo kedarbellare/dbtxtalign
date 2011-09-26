@@ -145,7 +145,7 @@ object BFTApp extends ABFTAlign with HasLogger {
     val hmmParams = learnEMSegmentParamsHMM(20, fExamples, 1e-2, 1e-2)
     decodeSegmentParamsHMM("bft.hmm.true.txt", "bft.hmm.pred.txt", fExamples, hmmParams)
 
-    // 4. WWT phase1 segment
+    // 4. WWT phase1 segment and learn from high-precision segmentations
     val approxMatchers = mapIndex(L, (l: Int) => {
       val lbl = labelIndexer(l)
       if (lbl == "O") new NoopScorer(0).score(_, _)
@@ -160,49 +160,9 @@ object BFTApp extends ABFTAlign with HasLogger {
       else if (lbl == "localarea") 0.9
       else 0.99
     })
-    var crfParams = newSegmentParams(false, true, labelIndexer, featureIndexer)
-    crfParams.setUniform_!
-    
-    val textExamples = (for (ex <- fvecExamples if !ex.isRecord) yield ex).toSeq
-    val recordExamples = (for (ex <- fvecExamples if ex.isRecord) yield ex).toSeq
-    val approxSumMatchThreshold = approxMatchThresholds.foldLeft(0.0)(_ + _)
 
-    println("=====================================================================================")
-    var numFoundMatch = 0
-    val hplExamples = new ArrayBuffer[FeatVecMentionExample]
-    hplExamples ++= recordExamples
-    for (ex1 <- textExamples) {
-      val clust1 = id2cluster.getOrElse(ex1.id, "NULL")
-      val matchedExamples = new ArrayBuffer[FeatVecMentionExample]
-      for (ex2 <- recordExamples if blocker.isPair(ex1.id, ex2.id)) {
-        val ex = new FeatVecMatchOnlyMentionExample(ex1.id, ex1.isRecord, ex1.words, ex1.possibleEnds, ex1.featSeq,
-          ex1.trueSegmentation, ex2.id, ex2.words, ex2.trueSegmentation)
-        val crfSegMatch = new CRFSegmentAndMatchWWT(labelIndexer, maxLengths, approxMatchers, approxMatchThresholds,
-          ex, crfParams, crfParams, InferSpec(0, 1, false, false, true, false, true, false, 1, 0))
-        if (crfSegMatch.logVZ >= approxSumMatchThreshold) {
-          println()
-          println("matchScore: " + crfSegMatch.logVZ + " clusterMatch: " + (clust1 == id2cluster(ex2.id)))
-          println("recordWords: " + ex2.words.mkString(" "))
-          println("recordSegmentation: " + ex2.trueSegmentation)
-          println("words: " + ex1.words.mkString(" "))
-          println("matchSegmentation: " + crfSegMatch.bestWidget)
-          println("segmentation: " + ex1.trueSegmentation)
-          matchedExamples += new FeatVecMentionExample(ex1.id, ex1.isRecord, ex1.words, ex1.possibleEnds,
-            ex1.featSeq, crfSegMatch.bestWidget)
-        }
-      }
-
-      if (matchedExamples.size == 1) {
-        println("=====================================================================================")
-        hplExamples += matchedExamples(0)
-        numFoundMatch += 1
-      }
-    }
-
-    println(numFoundMatch + "/" + textExamples.length)
-
-    // 5. Learn from high-precision segmentations
-    crfParams = learnSupervisedSegmentParamsCRF(50, hplExamples, 1, 1)
+    val hplExamples = getHighPrecisionLabeledExamples(fvecExamples, blocker, approxMatchers, approxMatchThresholds, id2cluster)
+    val crfParams = learnSupervisedSegmentParamsCRF(50, hplExamples, 1, 1)
     // crfParams.output(logger.info(_))
     decodeSegmentParamsCRF("bft.crf.true.txt", "bft.crf.pred.txt", fvecExamples.filter(_.isRecord == false), crfParams)
   }
