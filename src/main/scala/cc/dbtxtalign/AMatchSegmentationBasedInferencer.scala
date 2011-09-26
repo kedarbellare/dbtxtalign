@@ -101,7 +101,7 @@ trait AMatchSegmentationBasedInferencer[Feature, Example <: AFeatAlignmentMentio
     }
 
     def genMatch(isMatch: Boolean): Object = {
-      val node = "match=" + isMatch
+      val node = (isMatch, 0)
       if (H.addSumNode(node)) {
         genStartSegments((segment: Segment) => {
           require(segment.begin == 0, "Invalid begin index at start!")
