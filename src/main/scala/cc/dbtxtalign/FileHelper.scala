@@ -51,22 +51,22 @@ object FileHelper {
     buff.toSeq
   }
 
-  def getMapping1to2(filename: String): HashMap[String, String] = {
+  private def getMapping(filename: String, order: (String, String) => (String, String)): HashMap[String, String] = {
     val ret = new HashMap[String, String]
     Source.fromFile(filename).getLines().foreach(line => {
       val parts = line.split("\t")
-      ret(parts(0)) = parts(1)
+      val (key, value) = order(parts(0), parts(1))
+      ret(key) = value
     })
     ret
   }
 
+  def getMapping1to2(filename: String): HashMap[String, String] = {
+    getMapping(filename, (s1: String, s2: String) => (s1, s2))
+  }
+
   def getMapping2to1(filename: String): HashMap[String, String] = {
-    val ret = new HashMap[String, String]
-    Source.fromFile(filename).getLines().foreach(line => {
-      val parts = line.split("\t")
-      ret(parts(1)) = parts(0)
-    })
-    ret
+    getMapping(filename, (s1: String, s2: String) => (s2, s1))
   }
 }
 
