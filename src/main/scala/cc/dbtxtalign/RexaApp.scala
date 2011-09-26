@@ -1,17 +1,21 @@
 package cc.dbtxtalign
 
-import blocking.{AbstractBlocker, PhraseHash, InvertedIndexBlocker, UnionIndexBlocker}
-import collection.mutable.HashMap
-import org.apache.log4j.Logger
 import cc.refectorie.user.kedarb.dynprog.utils.Utils
+import collection.mutable.HashMap
+import org.riedelcastro.nurupo.HasLogger
+import blocking.{AbstractBlocker, PhraseHash, InvertedIndexBlocker, UnionIndexBlocker}
+import mongo.KB
 
 /**
  * @author kedar
  */
 
+object RexaKB extends KB("rexa",
+  DBAlignConfig.get[String]("mongoHostname", "localhost"),
+  DBAlignConfig.get[Int]("mongoPort", 27017))
 
-object RexaApp extends AbstractAlign {
-  val logger = Logger.getLogger(this.getClass.getSimpleName)
+trait ARexaAlign extends AbstractAlign {
+  val kb = RexaKB
 
   val YEAR = "(19|20)\\d\\d[a-z]?"
   val REFMARKER = "\\[[A-Za-z]*\\d+\\]"
@@ -28,6 +32,25 @@ object RexaApp extends AbstractAlign {
     else if (s.toLowerCase.matches(DOTW)) "$day$"
     else if (s.matches("\\(" + YEAR + "\\)")) "$yearbraces$"
     else s.replaceAll("\\d", "0").toLowerCase
+  }
+
+  def isPossibleEnd(j: Int, words: Seq[String]): Boolean = {
+    val endsOnPunc = "^.*[^A-Za-z0-9\\-]$"
+    val startsWithPunc = "^[^A-Za-z0-9\\-].*$"
+    val endsWithAlpha = "^.*[A-Za-z]$"
+    val endsWithNum = "^.*[0-9]$"
+    val startsWithAlpha = "^[A-Za-z].*$"
+    val startsWithNum = "^[0-9].*$"
+    val endsOnSpecial = "^(and|et\\.?|vol\\.?|no\\.?|pp\\.?|pages)$"
+    // info("calling isEnd('" + words(j - 1) + "'): " + words.mkString(" "))
+    if (j == 0) false
+    else j == words.length ||
+      words(j - 1).matches(endsOnPunc) || // word ends on punctuation
+      words(j).matches(startsWithPunc) || // words begins with punctuation
+      words(j - 1).toLowerCase.matches(endsOnSpecial) || // "<s>X</s> and <s>Y</s>"
+      words(j).toLowerCase.matches(endsOnSpecial) || // "<s>X</s> and <s>Y</s>"
+      (words(j - 1).matches(endsWithAlpha) && words(j).matches(startsWithNum)) || // alpha -> num
+      (words(j - 1).matches(endsWithNum) && words(j).matches(startsWithAlpha)) // num -> alpha
   }
 
   def getBlocker(rawMentions: Seq[Mention], id2mention: HashMap[String, Mention],
@@ -51,26 +74,19 @@ object RexaApp extends AbstractAlign {
 
     unionIndex1
   }
+}
 
-  def isPossibleEnd(j: Int, words: Seq[String]): Boolean = {
-    val endsOnPunc = "^.*[^A-Za-z0-9\\-]$"
-    val startsWithPunc = "^[^A-Za-z0-9\\-].*$"
-    val endsWithAlpha = "^.*[A-Za-z]$"
-    val endsWithNum = "^.*[0-9]$"
-    val startsWithAlpha = "^[A-Za-z].*$"
-    val startsWithNum = "^[0-9].*$"
-    val endsOnSpecial = "^(and|et\\.?|vol\\.?|no\\.?|pp\\.?|pages)$"
-    // info("calling isEnd('" + words(j - 1) + "'): " + words.mkString(" "))
-    if (j == 0) false
-    else j == words.length ||
-      words(j - 1).matches(endsOnPunc) || // word ends on punctuation
-      words(j).matches(startsWithPunc) || // words begins with punctuation
-      words(j - 1).toLowerCase.matches(endsOnSpecial) || // "<s>X</s> and <s>Y</s>"
-      words(j).toLowerCase.matches(endsOnSpecial) || // "<s>X</s> and <s>Y</s>"
-      (words(j - 1).matches(endsWithAlpha) && words(j).matches(startsWithNum)) || // alpha -> num
-      (words(j - 1).matches(endsWithNum) && words(j).matches(startsWithAlpha)) // num -> alpha
+object RexaMongoLoader extends ARexaAlign with HasLogger {
+  def main(args: Array[String]) {
+    kb.getColl("records").drop()
+    kb.getColl("texts").drop()
+
+    FileHelper.loadRawMentions(kb, true, args(0), "records")
+    FileHelper.loadRawMentions(kb, false, args(1), "texts")
   }
+}
 
+object RexaApp extends ARexaAlign with HasLogger {
   def main(args: Array[String]) {
     val rawRecords = FileHelper.getRawMentions(true, args(0))
     val rawTexts = FileHelper.getRawMentions(false, args(1))
@@ -91,7 +107,7 @@ object RexaApp extends AbstractAlign {
       if (numMentions % 1000 == 0) logger.info("Processed " + numMentions + "/" + maxMentions)
     }
 
-    val id2cluster = FileHelper.getMentionClusters(args(2))
+    val id2cluster = FileHelper.getMapping1to2(args(2))
     val cluster2ids = getClusterToIds(id2cluster)
     val examples = id2example.values.toSeq
 

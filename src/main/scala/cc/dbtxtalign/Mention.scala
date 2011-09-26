@@ -3,6 +3,7 @@ package cc.dbtxtalign
 import collection.mutable.ArrayBuffer
 import cc.refectorie.user.kedarb.dynprog.segment.Segmentation
 import cc.refectorie.user.kedarb.dynprog.utils.Utils
+import com.mongodb.casbah.Imports._
 
 /**
  * @author kedar
@@ -46,9 +47,19 @@ object SegmentationHelper {
     buff.append('\n')
     buff.toString
   }
+
+  def getStringSeq(dbo: DBObject, name: String): Seq[String] = {
+    dbo.as[BasicDBList](name).toArray.map(_.toString)
+  }
 }
 
 class Mention(val id: String, val isRecord: Boolean, val words: Seq[String], val trueBioLabels: Seq[String]) {
+  def this(dbo: DBObject) = {
+    this (dbo._id.get.toString, dbo.as[Boolean]("isRecord"),
+      SegmentationHelper.getStringSeq(dbo, "words"),
+      SegmentationHelper.getStringSeq(dbo, "bioLabels"))
+  }
+
   def extractTrueSegmentsFor(label: String): Seq[Seq[String]] =
     SegmentationHelper.extractSegmentsForLabel(words, trueBioLabels, label)
 

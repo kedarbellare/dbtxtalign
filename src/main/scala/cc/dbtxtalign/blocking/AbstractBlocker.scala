@@ -28,8 +28,8 @@ trait AbstractBlocker {
         if (isPair(ids(i), ids(j))) {
           numFound += 1
         } else if (printErrors) {
-          println("\tmissed: [" + id2mention(ids(i)).words.mkString(" ") + "]\t[" +
-            id2mention(ids(j)).words.mkString(" ") + "]")
+          println("\tmissed: [" + id2mention(ids(i)).isRecord + "][" + id2mention(ids(i)).words.mkString(" ") + "]\t[" +
+            id2mention(ids(j)).isRecord + "][" + id2mention(ids(j)).words.mkString(" ") + "]")
         }
         numPairs += 1
       }

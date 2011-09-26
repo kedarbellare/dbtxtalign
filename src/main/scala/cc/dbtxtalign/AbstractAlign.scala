@@ -3,12 +3,16 @@ package cc.dbtxtalign
 import blocking.AbstractBlocker
 import collection.mutable.{ArrayBuffer, HashMap}
 import java.io.PrintWriter
+import org.apache.log4j.Logger
 import params.{EmissionParams, TransitionParams, SegmentParams}
 import cc.refectorie.user.kedarb.dynprog.types.{ParamUtils, FtrVec, Indexer}
 import cc.refectorie.user.kedarb.dynprog.utils.Utils._
-import cc.refectorie.user.kedarb.dynprog.InferSpec
 import cc.refectorie.user.kedarb.dynprog.segment._
-import org.apache.log4j.Logger
+import cc.refectorie.user.kedarb.dynprog.{ProbStats, InferSpec}
+import optimization.linesearch.ArmijoLineSearchMinimization
+import optimization.stopCriteria.AverageValueDifference
+import optimization.gradientBasedMethods.stats.OptimizerStats
+import optimization.gradientBasedMethods.{Objective, Optimizer, LBFGS}
 
 /**
  * @author kedar
@@ -20,13 +24,14 @@ trait AbstractAlign {
   val labelIndexer = new Indexer[String]
   val wordFeatureIndexer = new Indexer[String]
   val featureIndexer = new Indexer[String]
+  val alignFeatureIndexer = new Indexer[String]
   val maxLengths = new ArrayBuffer[Int]
   val otherLabelIndex = labelIndexer.indexOf_!("O")
 
   def logger: Logger
 
   def simplify(s: String): String
-  
+
   def L = labelIndexer.size
 
   def W = wordIndexer.size
@@ -34,6 +39,8 @@ trait AbstractAlign {
   def WF = wordFeatureIndexer.size
 
   def F = featureIndexer.size
+
+  def AF = alignFeatureIndexer.size
 
   def adjustSegmentation(words: Seq[String], segmentation: Segmentation): Segmentation = {
     val adjSegmentation = new Segmentation(segmentation.length)
@@ -197,6 +204,84 @@ trait AbstractAlign {
     for (ex <- examples if !ex.isRecord) {
       val inferencer = new HMMSegmentationInferencer(labelIndexer, maxLengths, ex, segparams, segparams,
         InferSpec(0, 1, false, ex.isRecord, true, false, true, false, 1, 0))
+      val predSeg = adjustSegmentation(ex.words, inferencer.bestWidget)
+      val trueSeg = adjustSegmentation(ex.words, ex.trueSegmentation)
+      tokenPerf.add(trueSeg, predSeg)
+      segmentPerf.add(trueSeg, predSeg)
+      perLabelPerf.add(trueSeg, predSeg)
+      predOut.println(SegmentationHelper.toFullString(ex.words, predSeg, labelIndexer(_)))
+      trueOut.println(SegmentationHelper.toFullString(ex.words, trueSeg, labelIndexer(_)))
+    }
+    tokenPerf.output(logger.info(_))
+    perLabelPerf.output(logger.info(_))
+    segmentPerf.output(logger.info(_))
+    trueOut.close()
+    predOut.close()
+  }
+
+  // 2. Segment CRF trained on high-precision segmentations
+  def learnSupervisedSegmentParamsCRF(numIter: Int, examples: Seq[FeatVecMentionExample],
+                                      textWeight: Double, invVariance: Double): SegmentParams = {
+    val params = newSegmentParams(false, true, labelIndexer, featureIndexer)
+    params.setUniform_!
+
+    // calculate constraints once
+    val constraints = newSegmentParams(false, true, labelIndexer, featureIndexer)
+    for (ex <- examples) {
+      val stepSize = if (ex.isRecord) 1.0 else textWeight
+      new CRFSegmentationInferencer(labelIndexer, maxLengths, ex, params, constraints,
+        InferSpec(0, 1, false, true, false, false, false, true, 1, stepSize)).updateCounts
+    }
+    // constraints.output(logger.info(_))
+
+    val objective = new ACRFObjective[SegmentParams](params, invVariance) {
+      def logger = Logger.getLogger("high-precision-crf-trainer")
+
+      def getValueAndGradient = {
+        val expectations = newSegmentParams(false, true, labelIndexer, featureIndexer)
+        val stats = new ProbStats()
+        for (ex <- examples) {
+          val stepSize = if (ex.isRecord) 1.0 else textWeight
+          // constraints cost
+          val truthInfer = new CRFSegmentationInferencer(labelIndexer, maxLengths, ex, params, constraints,
+            InferSpec(0, 1, false, true, false, false, false, true, 1, 0))
+          // expectations
+          val predInfer = new CRFSegmentationInferencer(labelIndexer, maxLengths, ex, params, expectations,
+            InferSpec(0, 1, false, false, false, false, false, true, 1, -stepSize))
+          predInfer.updateCounts
+          stats += (truthInfer.stats - predInfer.stats) * stepSize
+        }
+        expectations.add_!(constraints, 1)
+        (expectations, stats)
+      }
+    }
+
+    // optimize
+    val ls = new ArmijoLineSearchMinimization
+    val stop = new AverageValueDifference(1e-3)
+    val optimizer = new LBFGS(ls, 4)
+    val stats = new OptimizerStats {
+      override def collectIterationStats(optimizer: Optimizer, objective: Objective) {
+        super.collectIterationStats(optimizer, objective)
+        logger.info("*** finished segmentation learning only epoch=" + (optimizer.getCurrentIteration + 1))
+      }
+    }
+    optimizer.setMaxIterations(numIter)
+    optimizer.optimize(objective, stats, stop)
+
+    params
+  }
+
+  def decodeSegmentParamsCRF(trueFilename: String, predFilename: String,
+                             examples: Seq[FeatVecMentionExample], segparams: SegmentParams) {
+    val trueOut = new PrintWriter(trueFilename)
+    val predOut = new PrintWriter(predFilename)
+    val segmentPerf = new SegmentSegmentationEvaluator("textSegEval", labelIndexer)
+    val tokenPerf = new SegmentLabelAccuracyEvaluator("textLblEval")
+    val perLabelPerf = new SegmentPerLabelAccuracyEvaluator("textPerLblEval", labelIndexer)
+    for (ex <- examples if !ex.isRecord) {
+      val inferencer = new CRFSegmentationInferencer(labelIndexer, maxLengths, ex, segparams, segparams,
+        InferSpec(0, 1, false, ex.isRecord, true, false, false, true, 1, 0))
       val predSeg = adjustSegmentation(ex.words, inferencer.bestWidget)
       val trueSeg = adjustSegmentation(ex.words, ex.trueSegmentation)
       tokenPerf.add(trueSeg, predSeg)

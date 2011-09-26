@@ -1,19 +1,24 @@
 package cc.dbtxtalign
 
 import cc.refectorie.user.kedarb.dynprog.utils.Utils._
-import collection.mutable.HashMap
-import org.apache.log4j.Logger
+import cc.refectorie.user.kedarb.dynprog.InferSpec
+import com.mongodb.casbah.Imports._
+import org.riedelcastro.nurupo.HasLogger
 import blocking.{AbstractBlocker, UnionIndexBlocker, InvertedIndexBlocker, PhraseHash}
 import phrasematch._
-import cc.refectorie.user.kedarb.dynprog.InferSpec
-import cc.refectorie.user.kedarb.dynprog.segment.Segmentation
+import mongo.KB
+import collection.mutable.{ArrayBuffer, HashMap}
 
 /**
  * @author kedar
  */
 
-object BFTApp extends AbstractAlign {
-  val logger = Logger.getLogger(this.getClass.getSimpleName)
+object BFTKB extends KB("bft",
+  DBAlignConfig.get[String]("mongoHostname", "localhost"),
+  DBAlignConfig.get[Int]("mongoPort", 27017))
+
+trait ABFTAlign extends AbstractAlign {
+  val kb = BFTKB
 
   val MONTH = "(?:january|february|march|april|may|june|july|august|september|october|november|december|" +
     "jan|feb|apr|jun|jul|aug|sep|sept|oct|nov|dec)"
@@ -67,26 +72,68 @@ object BFTApp extends AbstractAlign {
   def approxTokenMatcher(t1: String, t2: String): Boolean = {
     ObjectStringScorer.getThresholdLevenshtein(t1, t2, 2) <= 1 || ObjectStringScorer.getJaroWinklerScore(t1, t2) >= 0.95
   }
+}
 
+object BFTMongoLoader extends ABFTAlign with HasLogger {
   def main(args: Array[String]) {
-    val rawRecords = FileHelper.getRawMentions(true, args(0))
-    val rawTexts = FileHelper.getRawMentions(false, args(1))
+    kb.getColl("records").dropCollection()
+    kb.getColl("texts").dropCollection()
+
+    FileHelper.loadRawMentions(kb, true, args(0), "records")
+    FileHelper.loadRawMentions(kb, false, args(1), "texts")
+  }
+}
+
+object BFTFeatureSequenceLoader extends ABFTAlign with HasLogger {
+  def main(args: Array[String]) {
+    val featuresColl = kb.getColl("features")
+    featuresColl.dropCollection()
+    for (dbo <- kb.getColl("records").find() ++ kb.getColl("texts").find(); m = new Mention(dbo)) {
+      val builder = MongoDBObject.newBuilder
+      val features = m.words.map(simplify(_))
+      builder += "_id" -> m.id
+      builder += "features" -> features
+      featuresColl += builder.result()
+      // output features
+      if (!m.isRecord) {
+        println(features.mkString(" "))
+      }
+    }
+  }
+}
+
+object BFTApp extends ABFTAlign with HasLogger {
+  def main(args: Array[String]) {
+    val rawRecords = kb.getColl("records").map(new Mention(_)).toArray
+    val rawTexts = kb.getColl("texts").map(new Mention(_)).toArray
     val rawMentions = rawRecords ++ rawTexts
     logger.info("#records=" + rawRecords.size + " #texts=" + rawTexts.size)
 
     val id2mention = new HashMap[String, Mention]
-    val id2example = new HashMap[String, FeatMentionExample]
+    val id2fExample = new HashMap[String, FeatMentionExample]
+    val id2fvecExample = new HashMap[String, FeatVecMentionExample]
+    val id2cluster = FileHelper.getMapping1to2(args(0))
+    val word2path = FileHelper.getMapping2to1(args(1))
+    val cluster2ids = getClusterToIds(id2cluster)
     for (m <- rawMentions) {
       val featSeq = getFeatureSequence_!(m, wordFeatureIndexer, simplify(_))
+      val featVecSeq = getFeatureVectorSequence_!(m, featureIndexer, (words: Seq[String], ip: Int) => {
+        val word = words(ip)
+        val feats = new ArrayBuffer[String]
+        feats += "SIMPLIFIED=" + simplify(word)
+        if (word.matches("\\d+(\\.\\d+)?\\*")) feats += "CONTAINS_STAR_PATTERN"
+        if (word2path.contains(word)) feats += "PATH=" + word2path(word)
+        feats.toSeq
+      })
       val trueSeg = getSegmentationAndMaxLength_!(m, labelIndexer, maxLengths)
       val possibleEnds = mapIndex(m.words.length + 1, (j: Int) => true)
       id2mention(m.id) = m
-      id2example(m.id) = new FeatMentionExample(m.id, m.isRecord, m.words, possibleEnds, featSeq, trueSeg)
+      id2fExample(m.id) = new FeatMentionExample(m.id, m.isRecord, m.words, possibleEnds, featSeq, trueSeg)
+      id2fvecExample(m.id) = new FeatVecMentionExample(m.id, m.isRecord, m.words, possibleEnds, featVecSeq, trueSeg)
     }
 
-    val id2cluster = FileHelper.getMentionClusters(args(2))
-    val cluster2ids = getClusterToIds(id2cluster)
-    val examples = id2example.values.toSeq
+    val fExamples = id2fExample.values.toSeq
+    val fvecExamples = id2fvecExample.values.toSeq
 
     // 1. Calculate candidate pairs using hotelname and localarea
     val blocker = getBlocker(rawMentions, id2mention, cluster2ids)
@@ -95,8 +142,8 @@ object BFTApp extends AbstractAlign {
     logger.info("#maxMatched=" + getMaxRecordsMatched(rawTexts, rawRecords, blocker))
 
     // 3. Segment HMM baseline
-    // val segparams = learnEMSegmentParamsHMM(20, examples, 1e-2, 1e-2)
-    // decodeSegmentParamsHMM("bft.hmm.true.txt", "bft.hmm.pred.txt", examples, segparams)
+    val hmmParams = learnEMSegmentParamsHMM(20, fExamples, 1e-2, 1e-2)
+    decodeSegmentParamsHMM("bft.hmm.true.txt", "bft.hmm.pred.txt", fExamples, hmmParams)
 
     // 4. WWT phase1 segment
     val approxMatchers = mapIndex(L, (l: Int) => {
@@ -109,42 +156,54 @@ object BFTApp extends AbstractAlign {
     val approxMatchThresholds = mapIndex(L, (l: Int) => {
       val lbl = labelIndexer(l)
       if (lbl == "O") 0.0
-      else if (lbl == "hotelname") 0.8
-      else if (lbl == "localarea") 0.8
+      else if (lbl == "hotelname") 0.9
+      else if (lbl == "localarea") 0.9
       else 0.99
     })
-    val segparams = newSegmentParams(true, true, labelIndexer, wordFeatureIndexer)
-    val segcounts = newSegmentParams(true, true, labelIndexer, wordFeatureIndexer)
-    segparams.setUniform_!
-    segparams.normalize_!(1e-2)
-
-    val textExamples = (for (ex <- examples if !ex.isRecord) yield ex).toSeq
-    val recordExamples = (for (ex <- examples if ex.isRecord) yield ex).toSeq
+    var crfParams = newSegmentParams(false, true, labelIndexer, featureIndexer)
+    crfParams.setUniform_!
+    
+    val textExamples = (for (ex <- fvecExamples if !ex.isRecord) yield ex).toSeq
+    val recordExamples = (for (ex <- fvecExamples if ex.isRecord) yield ex).toSeq
     val approxSumMatchThreshold = approxMatchThresholds.foldLeft(0.0)(_ + _)
 
     println("=====================================================================================")
+    var numFoundMatch = 0
+    val hplExamples = new ArrayBuffer[FeatVecMentionExample]
+    hplExamples ++= recordExamples
     for (ex1 <- textExamples) {
       val clust1 = id2cluster.getOrElse(ex1.id, "NULL")
-      var foundMatch = false
+      val matchedExamples = new ArrayBuffer[FeatVecMentionExample]
       for (ex2 <- recordExamples if blocker.isPair(ex1.id, ex2.id)) {
-        val ex = new FeatMatchOnlyMentionExample(ex1.id, ex1.isRecord, ex1.words, ex1.possibleEnds, ex1.featSeq,
+        val ex = new FeatVecMatchOnlyMentionExample(ex1.id, ex1.isRecord, ex1.words, ex1.possibleEnds, ex1.featSeq,
           ex1.trueSegmentation, ex2.id, ex2.words, ex2.trueSegmentation)
-        val hmmSegMatch = new HMMSegmentAndMatchWWT(labelIndexer, maxLengths, approxMatchers, approxMatchThresholds,
-          ex, segparams, segcounts, InferSpec(0, 1, false, false, true, false, true, false, 1, 0))
-        if (hmmSegMatch.logVZ >= approxSumMatchThreshold) {
-          foundMatch = true
+        val crfSegMatch = new CRFSegmentAndMatchWWT(labelIndexer, maxLengths, approxMatchers, approxMatchThresholds,
+          ex, crfParams, crfParams, InferSpec(0, 1, false, false, true, false, true, false, 1, 0))
+        if (crfSegMatch.logVZ >= approxSumMatchThreshold) {
           println()
-          println("matchScore: " + hmmSegMatch.logVZ + " clusterMatch: " + (clust1 == id2cluster(ex2.id)))
+          println("matchScore: " + crfSegMatch.logVZ + " clusterMatch: " + (clust1 == id2cluster(ex2.id)))
           println("recordWords: " + ex2.words.mkString(" "))
           println("recordSegmentation: " + ex2.trueSegmentation)
           println("words: " + ex1.words.mkString(" "))
-          println("matchSegmentation: " + hmmSegMatch.bestWidget)
+          println("matchSegmentation: " + crfSegMatch.bestWidget)
           println("segmentation: " + ex1.trueSegmentation)
+          matchedExamples += new FeatVecMentionExample(ex1.id, ex1.isRecord, ex1.words, ex1.possibleEnds,
+            ex1.featSeq, crfSegMatch.bestWidget)
         }
       }
-      
-      if (foundMatch)
+
+      if (matchedExamples.size == 1) {
         println("=====================================================================================")
+        hplExamples += matchedExamples(0)
+        numFoundMatch += 1
+      }
     }
+
+    println(numFoundMatch + "/" + textExamples.length)
+
+    // 5. Learn from high-precision segmentations
+    crfParams = learnSupervisedSegmentParamsCRF(50, hplExamples, 1, 1)
+    // crfParams.output(logger.info(_))
+    decodeSegmentParamsCRF("bft.crf.true.txt", "bft.crf.pred.txt", fvecExamples.filter(_.isRecord == false), crfParams)
   }
 }

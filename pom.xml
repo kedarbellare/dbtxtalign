@@ -88,6 +88,11 @@
             <artifactId>simmetrics</artifactId>
             <version>1.6.2</version>
         </dependency>
+        <dependency>
+            <groupId>org.riedelcastro.nurupo</groupId>
+            <artifactId>nurupo</artifactId>
+            <version>0.1-SNAPSHOT</version>
+        </dependency>
     </dependencies>
 
     <build>
