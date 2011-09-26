@@ -54,12 +54,17 @@ class EmissionParams(val labelIndexer: Indexer[String],
 
 class AlignParams(val labelIndexer: Indexer[String],
                   val alignFeatureIndexer: Indexer[String],
+                  val isAlign: ParamVec,
                   val labelAligns: Array[ParamVec]) extends AParams {
   def foreachVec(f: (ParamVec) => Any) {
+    f(isAlign)
     labelAligns.foreach(f(_))
   }
 
   def output(puts: (String) => Any) {
+    puts("")
+    puts("M\ttrue\t%s".format(isAlign(0)))
+    puts("M\tfalse\t%s".format(isAlign(1)))
     foreachIndex(labelAligns, {
       (a: Int, pv: ParamVec) =>
         puts("")
@@ -72,7 +77,7 @@ class AlignParams(val labelIndexer: Indexer[String],
 }
 
 class SegmentParams(val transitions: TransitionParams, val emissions: EmissionParams) extends AParams {
-    def output(puts: (String) => Any) {
+  def output(puts: (String) => Any) {
     transitions.output(puts)
     emissions.output(puts)
   }

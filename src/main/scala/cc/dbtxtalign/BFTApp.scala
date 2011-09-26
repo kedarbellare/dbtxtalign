@@ -140,7 +140,10 @@ object BFTApp extends ABFTAlign with HasLogger {
 
     // 2. Find for the set of records that are candidate matches for each text
     logger.info("#maxMatched=" + getMaxRecordsMatched(rawTexts, rawRecords, blocker))
+    logger.info("#recordPairsMatched=" + getNumRecordPairsMatched(rawRecords, blocker))
 
+    if (true) return
+    
     // 3. Segment HMM baseline
     val hmmParams = learnEMSegmentParamsHMM(20, fExamples, 1e-2, 1e-2)
     decodeSegmentParamsHMM("bft.hmm.true.txt", "bft.hmm.pred.txt", fExamples, hmmParams)

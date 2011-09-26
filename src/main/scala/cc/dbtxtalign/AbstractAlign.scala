@@ -152,6 +152,20 @@ trait AbstractAlign {
     maxRecordsMatched
   }
 
+  def getNumRecordPairsMatched(rawRecords: Seq[Mention], blocker: AbstractBlocker): Int = {
+    var numRecordPairs = 0
+    for (ex1 <- rawRecords) {
+      val id1 = ex1.id
+      for (ex2 <- rawRecords) {
+        val id2 = ex2.id
+        if (id1 != id2 && blocker.isPair(id1, id2)) {
+          numRecordPairs += 1
+        }
+      }
+    }
+    numRecordPairs
+  }
+
   def newSegmentParams(isProb: Boolean, isDense: Boolean,
                        labelIndexer: Indexer[String], featureIndexer: Indexer[String]): SegmentParams = {
     import ParamUtils._
