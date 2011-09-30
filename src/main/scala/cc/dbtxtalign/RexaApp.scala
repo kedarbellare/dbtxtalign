@@ -1,10 +1,12 @@
 package cc.dbtxtalign
 
-import cc.refectorie.user.kedarb.dynprog.utils.Utils
-import collection.mutable.HashMap
 import org.riedelcastro.nurupo.HasLogger
 import blocking.{AbstractBlocker, PhraseHash, InvertedIndexBlocker, UnionIndexBlocker}
 import mongo.KB
+import cc.refectorie.user.kedarb.dynprog.utils.Utils._
+import com.mongodb.casbah.commons.Imports._
+import cc.refectorie.user.kedarb.dynprog.types.FtrVec
+import collection.mutable.{ArrayBuffer, HashMap}
 
 /**
  * @author kedar
@@ -16,6 +18,11 @@ object RexaKB extends KB("rexa",
 
 trait ARexaAlign extends AbstractAlign {
   val kb = RexaKB
+
+  val recordsColl = kb.getColl("records")
+  val textsColl = kb.getColl("texts")
+  val featuresColl = kb.getColl("features")
+  val featureVectorsColl = kb.getColl("featureVectors")
 
   val YEAR = "(19|20)\\d\\d[a-z]?"
   val REFMARKER = "\\[[A-Za-z]*\\d+\\]"
@@ -53,6 +60,28 @@ trait ARexaAlign extends AbstractAlign {
       (words(j - 1).matches(endsWithNum) && words(j).matches(startsWithAlpha)) // num -> alpha
   }
 
+  def toFeatExample(m: Mention) = {
+    val possibleEnds = mapIndex(m.words.length + 1, (j: Int) => isPossibleEnd(j, m.words))
+    val features = featuresColl.findOneByID(m.id).get.as[BasicDBList]("features").toArray.map(_.toString)
+    new FeatMentionExample(m.id, m.isRecord, m.words, possibleEnds,
+      features.map(wordFeatureIndexer.indexOf_!(_)), getSegmentationAndMaxLength_!(m, labelIndexer, maxLengths))
+  }
+
+  def toFeatVecExample(m: Mention) = {
+    val possibleEnds = mapIndex(m.words.length + 1, (j: Int) => isPossibleEnd(j, m.words))
+    val featureVectors = featureVectorsColl.findOneByID(m.id).get.as[BasicDBList]("featureVectors").toArray
+      .map(_.asInstanceOf[BasicDBList].toArray.map(_.toString))
+    val featVecSeq = mapIndex(m.words.length, (ip: Int) => {
+      val fv = new FtrVec
+      featureVectors(ip).map(featureIndexer.indexOf_!(_)).filter(_ >= 0).toSet.foreach({
+        f: Int => fv += f -> 1.0
+      })
+      fv
+    })
+    new FeatVecMentionExample(m.id, m.isRecord, m.words, possibleEnds,
+      featVecSeq, getSegmentationAndMaxLength_!(m, labelIndexer, maxLengths))
+  }
+
   def getBlocker(rawMentions: Seq[Mention], id2mention: HashMap[String, Mention],
                  cluster2ids: HashMap[String, Seq[String]]): AbstractBlocker = {
     val authorIndex1 = new InvertedIndexBlocker(500, rawMentions, {
@@ -78,11 +107,52 @@ trait ARexaAlign extends AbstractAlign {
 
 object RexaMongoLoader extends ARexaAlign with HasLogger {
   def main(args: Array[String]) {
-    kb.getColl("records").drop()
-    kb.getColl("texts").drop()
+    recordsColl.drop()
+    textsColl.drop()
 
     FileHelper.loadRawMentions(kb, true, args(0), "records")
     FileHelper.loadRawMentions(kb, false, args(1), "texts")
+  }
+}
+
+object RexaFeatureSequenceLoader extends ARexaAlign with HasLogger {
+  def main(args: Array[String]) {
+    featuresColl.dropCollection()
+    for (dbo <- kb.getColl("records").find() ++ kb.getColl("texts").find(); m = new Mention(dbo)) {
+      val builder = MongoDBObject.newBuilder
+      val features = m.words.map(simplify(_))
+      builder += "_id" -> m.id
+      builder += "features" -> features
+      featuresColl += builder.result()
+      // output features
+      if (!m.isRecord) {
+        println(features.mkString(" "))
+      }
+    }
+  }
+}
+
+object RexaFeatureVectorSequenceLoader extends ARexaAlign with HasLogger {
+  def main(args: Array[String]) {
+    featureVectorsColl.dropCollection()
+    val word2path = FileHelper.getMapping2to1(args(0))
+    for (dbo <- kb.getColl("records").find() ++ kb.getColl("texts").find(); m = new Mention(dbo)) {
+      val builder = MongoDBObject.newBuilder
+      val features = mapIndex(m.words.length, (ip: Int) => {
+        val word = m.words(ip)
+        val feats = new ArrayBuffer[String]
+        feats += "SIMPLIFIED=" + simplify(word)
+        if (word2path.contains(word)) feats += "PATH=" + word2path(word)
+        feats.toSeq
+      })
+      builder += "_id" -> m.id
+      builder += "featureVectors" -> features
+      featureVectorsColl += builder.result()
+      // output features
+      if (!m.isRecord) {
+        println(features.mkString(" "))
+      }
+    }
   }
 }
 
@@ -94,22 +164,17 @@ object RexaApp extends ARexaAlign with HasLogger {
     println("#records=" + rawRecords.size + " #texts=" + rawTexts.size)
 
     val id2mention = new HashMap[String, Mention]
-    val id2example = new HashMap[String, FeatMentionExample]
     var numMentions = 0
     val maxMentions = rawMentions.size
     for (m <- rawMentions) {
-      val featSeq = getFeatureSequence_!(m, wordFeatureIndexer, simplify(_))
-      val trueSeg = getSegmentationAndMaxLength_!(m, labelIndexer, maxLengths)
-      val possibleEnds = Utils.mapIndex(m.words.length + 1, (j: Int) => RexaApp.isPossibleEnd(j, m.words))
       id2mention(m.id) = m
-      id2example(m.id) = new FeatMentionExample(m.id, m.isRecord, m.words, possibleEnds, featSeq, trueSeg)
       numMentions += 1
       if (numMentions % 1000 == 0) logger.info("Processed " + numMentions + "/" + maxMentions)
     }
 
     val id2cluster = FileHelper.getMapping1to2(args(2))
     val cluster2ids = getClusterToIds(id2cluster)
-    val examples = id2example.values.toSeq
+    val examples = rawMentions.map(toFeatExample(_))
 
     // 1. calculate candidate pairs using author and title
     val blocker = getBlocker(rawMentions, id2mention, cluster2ids)
@@ -118,7 +183,10 @@ object RexaApp extends ARexaAlign with HasLogger {
     logger.info("#maxMatched=" + getMaxRecordsMatched(rawTexts, rawRecords, blocker))
 
     // 3. Segment HMM baseline
-    val segparams = learnEMSegmentParamsHMM(20, examples, 1e-2, 1e-2)
+    var segparams = newSegmentParams(true, true, labelIndexer, wordFeatureIndexer)
+    segparams.setUniform_!
+    segparams.normalize_!(1e-2)
+    segparams = learnEMSegmentParamsHMM(20, examples, segparams, 1e-2, 1e-2)
     decodeSegmentParamsHMM("rexa.hmm.true.txt", "rexa.hmm.pred.txt", examples, segparams)
   }
 }

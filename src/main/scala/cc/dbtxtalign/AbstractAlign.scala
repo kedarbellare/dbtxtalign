@@ -134,6 +134,10 @@ trait AbstractAlign {
     trueSeg
   }
 
+  def toFeatVecExample(m: Mention): FeatVecMentionExample
+
+  def toFeatExample(m: Mention): FeatMentionExample
+
   def getClusterToIds(id2cluster: HashMap[String, String]): HashMap[String, Seq[String]] = {
     val cluster2ids = new HashMap[String, Seq[String]]
     for ((id, cluster) <- id2cluster)
@@ -181,12 +185,9 @@ trait AbstractAlign {
 
   // Learning functions
   // 1. Segment HMM trained with EM
-  def learnEMSegmentParamsHMM(numIter: Int, examples: Seq[FeatMentionExample],
+  def learnEMSegmentParamsHMM(numIter: Int, examples: Seq[FeatMentionExample], hmmParams: SegmentParams,
                               unlabeledWeight: Double, smoothing: Double): SegmentParams = {
-    var segparams = newSegmentParams(true, true, labelIndexer, wordFeatureIndexer)
-    segparams.setUniform_!
-    segparams.normalize_!(smoothing)
-
+    var segparams = hmmParams
     for (iter <- 1 to numIter) {
       val segcounts = newSegmentParams(true, true, labelIndexer, wordFeatureIndexer)
       var loglike = 0.0
@@ -204,7 +205,6 @@ trait AbstractAlign {
       segcounts.normalize_!(smoothing)
       segparams = segcounts
     }
-
     segparams
   }
 
@@ -234,11 +234,8 @@ trait AbstractAlign {
   }
 
   // 2. Segment CRF trained on high-precision segmentations
-  def learnSupervisedSegmentParamsCRF(numIter: Int, examples: Seq[FeatVecMentionExample],
+  def learnSupervisedSegmentParamsCRF(numIter: Int, examples: Seq[FeatVecMentionExample], params: SegmentParams,
                                       textWeight: Double, invVariance: Double): SegmentParams = {
-    val params = newSegmentParams(false, true, labelIndexer, featureIndexer)
-    params.setUniform_!
-
     // calculate constraints once
     val constraints = newSegmentParams(false, true, labelIndexer, featureIndexer)
     for (ex <- examples) {
@@ -289,11 +286,10 @@ trait AbstractAlign {
   def getHighPrecisionLabeledExamples(fvecExamples: Seq[FeatVecMentionExample],
                                       blocker: AbstractBlocker,
                                       approxMatchers: Seq[(Seq[String], Seq[String]) => Double],
-                                      approxMatchThresholds: Seq[Double],
+                                      approxMatchThresholds: Seq[Double], approxSumMatchThreshold: Double,
                                       id2cluster: HashMap[String, String]): Seq[FeatVecMentionExample] = {
     val textExamples = (for (ex <- fvecExamples if !ex.isRecord) yield ex).toSeq
     val recordExamples = (for (ex <- fvecExamples if ex.isRecord) yield ex).toSeq
-    val approxSumMatchThreshold = approxMatchThresholds.foldLeft(0.0)(_ + _)
     var crfParams = newSegmentParams(false, true, labelIndexer, featureIndexer)
     crfParams.setUniform_!
 
@@ -319,6 +315,52 @@ trait AbstractAlign {
           logger.info("segmentation: " + ex1.trueSegmentation)
           matchedExamples += new FeatVecMentionExample(ex1.id, ex1.isRecord, ex1.words, ex1.possibleEnds,
             ex1.featSeq, crfSegMatch.bestWidget)
+        }
+      }
+
+      if (matchedExamples.size == 1) {
+        logger.info("=====================================================================================")
+        hplExamples += matchedExamples(0)
+        numFoundMatch += 1
+      }
+    }
+    logger.info(numFoundMatch + "/" + textExamples.length)
+
+    hplExamples.toSeq
+  }
+
+  def getHighPrecisionLabeledExamplesHMM(fvecExamples: Seq[FeatMentionExample],
+                                         blocker: AbstractBlocker,
+                                         approxMatchers: Seq[(Seq[String], Seq[String]) => Double],
+                                         approxMatchThresholds: Seq[Double], approxSumMatchThreshold: Double,
+                                         id2cluster: HashMap[String, String]): Seq[FeatMentionExample] = {
+    val textExamples = (for (ex <- fvecExamples if !ex.isRecord) yield ex).toSeq
+    val recordExamples = (for (ex <- fvecExamples if ex.isRecord) yield ex).toSeq
+    var hmmParams = newSegmentParams(true, true, labelIndexer, wordFeatureIndexer)
+    hmmParams.setUniform_!
+
+    logger.info("=====================================================================================")
+    var numFoundMatch = 0
+    val hplExamples = new ArrayBuffer[FeatMentionExample]
+    hplExamples ++= recordExamples
+    for (ex1 <- textExamples) {
+      val clust1 = id2cluster.getOrElse(ex1.id, "NULL")
+      val matchedExamples = new ArrayBuffer[FeatMentionExample]
+      for (ex2 <- recordExamples if blocker.isPair(ex1.id, ex2.id)) {
+        val ex = new FeatMatchOnlyMentionExample(ex1.id, ex1.isRecord, ex1.words, ex1.possibleEnds, ex1.featSeq,
+          ex1.trueSegmentation, ex2.id, ex2.words, ex2.trueSegmentation)
+        val hmmSegMatch = new HMMSegmentAndMatchWWT(labelIndexer, maxLengths, approxMatchers, approxMatchThresholds,
+          ex, hmmParams, hmmParams, InferSpec(0, 1, false, false, true, false, true, false, 1, 0))
+        if (hmmSegMatch.logVZ >= approxSumMatchThreshold) {
+          logger.info("")
+          logger.info("matchScore: " + hmmSegMatch.logVZ + " clusterMatch: " + (clust1 == id2cluster(ex2.id)))
+          logger.info("recordWords: " + ex2.words.mkString(" "))
+          logger.info("recordSegmentation: " + ex2.trueSegmentation)
+          logger.info("words: " + ex1.words.mkString(" "))
+          logger.info("matchSegmentation: " + hmmSegMatch.bestWidget)
+          logger.info("segmentation: " + ex1.trueSegmentation)
+          matchedExamples += new FeatMentionExample(ex1.id, ex1.isRecord, ex1.words, ex1.possibleEnds,
+            ex1.featSeq, hmmSegMatch.bestWidget)
         }
       }
 

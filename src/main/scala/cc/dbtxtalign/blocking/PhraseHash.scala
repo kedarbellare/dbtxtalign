@@ -45,11 +45,35 @@ object PhraseHash {
     grams
   }
 
+  def ngramsWordHash(phrase: Seq[String], ns: Seq[Int]): HashSet[String] = {
+    val grams = new HashSet[String]
+    ns.foreach(n => {
+      grams ++= ngramWordHash(phrase, n)
+    })
+    grams
+  }
+
   def ngramCharHash(phrase: Seq[String], n: Int): HashSet[String] = {
     val grams = new HashSet[String]
     phrase.foreach(w => {
       grams ++= ngramWordHash(w.map(_.toString), n)
     })
     grams
+  }
+
+  def ngramCharHash(s: String, n: Int): HashSet[String] = {
+    ngramCharHash(Seq(s), n)
+  }
+
+  def ngramsCharHash(phrase: Seq[String], ns: Seq[Int]): HashSet[String] = {
+    val grams = new HashSet[String]
+    ns.foreach(n => {
+      grams ++= ngramCharHash(phrase, n)
+    })
+    grams
+  }
+
+  def ngramsCharHash(s: String, ns: Seq[Int]): HashSet[String] = {
+    ngramsCharHash(Seq(s), ns)
   }
 }
