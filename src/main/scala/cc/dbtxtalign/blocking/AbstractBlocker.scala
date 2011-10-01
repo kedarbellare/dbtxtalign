@@ -1,6 +1,7 @@
 package cc.dbtxtalign.blocking
 
 import collection.mutable.{HashMap, HashSet}
+import com.mongodb.casbah.Imports._
 import cc.dbtxtalign.Mention
 
 /**
@@ -19,7 +20,7 @@ trait AbstractBlocker {
 
   def getAllPairs: HashSet[(String, String)]
 
-  def getRecall(cluster2ids: HashMap[String, Seq[String]], id2mention: HashMap[String, Mention],
+  def getRecall(cluster2ids: HashMap[String, Seq[String]], recordsColl: MongoCollection, textsColl: MongoCollection,
                 printErrors: Boolean = false) = {
     var numPairs = 0
     var numFound = 0
@@ -28,8 +29,14 @@ trait AbstractBlocker {
         if (isPair(ids(i), ids(j))) {
           numFound += 1
         } else if (printErrors) {
-          println("\tmissed: [" + id2mention(ids(i)).isRecord + "][" + id2mention(ids(i)).words.mkString(" ") + "]\t[" +
-            id2mention(ids(j)).isRecord + "][" + id2mention(ids(j)).words.mkString(" ") + "]")
+          val dbi1 = recordsColl.findOneByID(ids(i))
+          val dbi2 = textsColl.findOneByID(ids(i))
+          val dbj1 = recordsColl.findOneByID(ids(j))
+          val dbj2 = textsColl.findOneByID(ids(j))
+          val mi = new Mention({if (dbi1.isDefined) dbi1.get else dbi2.get})
+          val mj = new Mention({if (dbj1.isDefined) dbj1.get else dbj2.get})
+          println("\tmissed: [" + mi.isRecord + "][" + mi.words.mkString(" ") + "]\t[" + mj.isRecord + "][" +
+            mj.words.mkString(" ") + "]")
         }
         numPairs += 1
       }

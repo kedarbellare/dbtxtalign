@@ -55,7 +55,7 @@ object SegmentationHelper {
 
 class Mention(val id: String, val isRecord: Boolean, val words: Seq[String], val trueBioLabels: Seq[String]) {
   def this(dbo: DBObject) = {
-    this (dbo._id.get.toString, dbo.as[Boolean]("isRecord"),
+    this (dbo.as[String]("_id"), dbo.as[Boolean]("isRecord"),
       SegmentationHelper.getStringSeq(dbo, "words"),
       SegmentationHelper.getStringSeq(dbo, "bioLabels"))
   }

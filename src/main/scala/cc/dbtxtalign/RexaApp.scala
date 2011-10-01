@@ -82,14 +82,13 @@ trait ARexaAlign extends AbstractAlign {
       featVecSeq, getSegmentationAndMaxLength_!(m, labelIndexer, maxLengths))
   }
 
-  def getBlocker(rawMentions: Seq[Mention], id2mention: HashMap[String, Mention],
-                 cluster2ids: HashMap[String, Seq[String]]): AbstractBlocker = {
-    val authorIndex1 = new InvertedIndexBlocker(500, rawMentions, {
+  def getBlocker(cluster2ids: HashMap[String, Seq[String]]): AbstractBlocker = {
+    val authorIndex1 = new InvertedIndexBlocker(500, recordsColl, textsColl, {
       m: Mention => PhraseHash.ngramWordHash(m.extractTrueWordsFor("author"), 1)
     }, {
       m: Mention => PhraseHash.ngramWordHash(m.words, 1)
     })
-    val titleIndex1 = new InvertedIndexBlocker(500, rawMentions, {
+    val titleIndex1 = new InvertedIndexBlocker(500, recordsColl, textsColl, {
       m: Mention => PhraseHash.ngramWordHash(m.extractTrueWordsFor("title"), 2)
     }, {
       m: Mention => PhraseHash.ngramWordHash(m.words, 2)
@@ -97,9 +96,9 @@ trait ARexaAlign extends AbstractAlign {
     val unionIndex1 = new UnionIndexBlocker(Seq(authorIndex1, titleIndex1), false)
 
     // recall of hashes
-    logger.info("#author1Pairs=" + authorIndex1.numPairs + " recall=" + authorIndex1.getRecall(cluster2ids, id2mention))
-    logger.info("#title1Pairs=" + titleIndex1.numPairs + " recall=" + titleIndex1.getRecall(cluster2ids, id2mention))
-    logger.info("#unionPairs=" + unionIndex1.numPairs + " recall=" + unionIndex1.getRecall(cluster2ids, id2mention, false))
+    logger.info("#author1Pairs=" + authorIndex1.numPairs + " recall=" + authorIndex1.getRecall(cluster2ids, recordsColl, textsColl))
+    logger.info("#title1Pairs=" + titleIndex1.numPairs + " recall=" + titleIndex1.getRecall(cluster2ids, recordsColl, textsColl))
+    logger.info("#unionPairs=" + unionIndex1.numPairs + " recall=" + unionIndex1.getRecall(cluster2ids, recordsColl, textsColl, false))
 
     unionIndex1
   }
@@ -118,7 +117,7 @@ object RexaMongoLoader extends ARexaAlign with HasLogger {
 object RexaFeatureSequenceLoader extends ARexaAlign with HasLogger {
   def main(args: Array[String]) {
     featuresColl.dropCollection()
-    for (dbo <- kb.getColl("records").find() ++ kb.getColl("texts").find(); m = new Mention(dbo)) {
+    for (dbo <- recordsColl.find() ++ textsColl.find(); m = new Mention(dbo)) {
       val builder = MongoDBObject.newBuilder
       val features = m.words.map(simplify(_))
       builder += "_id" -> m.id
@@ -135,14 +134,12 @@ object RexaFeatureSequenceLoader extends ARexaAlign with HasLogger {
 object RexaFeatureVectorSequenceLoader extends ARexaAlign with HasLogger {
   def main(args: Array[String]) {
     featureVectorsColl.dropCollection()
-    val word2path = FileHelper.getMapping2to1(args(0))
-    for (dbo <- kb.getColl("records").find() ++ kb.getColl("texts").find(); m = new Mention(dbo)) {
+    for (dbo <- recordsColl.find() ++ textsColl.find(); m = new Mention(dbo)) {
       val builder = MongoDBObject.newBuilder
       val features = mapIndex(m.words.length, (ip: Int) => {
         val word = m.words(ip)
         val feats = new ArrayBuffer[String]
         feats += "SIMPLIFIED=" + simplify(word)
-        if (word2path.contains(word)) feats += "PATH=" + word2path(word)
         feats.toSeq
       })
       builder += "_id" -> m.id
@@ -158,10 +155,10 @@ object RexaFeatureVectorSequenceLoader extends ARexaAlign with HasLogger {
 
 object RexaApp extends ARexaAlign with HasLogger {
   def main(args: Array[String]) {
-    val rawRecords = FileHelper.getRawMentions(true, args(0))
-    val rawTexts = FileHelper.getRawMentions(false, args(1))
+    val rawRecords = recordsColl.map(new Mention(_)).toArray
+    val rawTexts = textsColl.map(new Mention(_)).toArray
     val rawMentions = rawRecords ++ rawTexts
-    println("#records=" + rawRecords.size + " #texts=" + rawTexts.size)
+    logger.info("#records=" + rawRecords.size + " #texts=" + rawTexts.size)
 
     val id2mention = new HashMap[String, Mention]
     var numMentions = 0
@@ -172,12 +169,12 @@ object RexaApp extends ARexaAlign with HasLogger {
       if (numMentions % 1000 == 0) logger.info("Processed " + numMentions + "/" + maxMentions)
     }
 
-    val id2cluster = FileHelper.getMapping1to2(args(2))
+    val id2cluster = FileHelper.getMapping1to2(args(0))
     val cluster2ids = getClusterToIds(id2cluster)
     val examples = rawMentions.map(toFeatExample(_))
 
     // 1. calculate candidate pairs using author and title
-    val blocker = getBlocker(rawMentions, id2mention, cluster2ids)
+    val blocker = getBlocker(cluster2ids)
 
     // 2. Find for the set of records that are candidate matches for each text
     logger.info("#maxMatched=" + getMaxRecordsMatched(rawTexts, rawRecords, blocker))

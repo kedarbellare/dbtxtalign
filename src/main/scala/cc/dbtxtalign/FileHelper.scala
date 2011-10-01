@@ -21,7 +21,7 @@ object FileHelper {
     var numMentions = 0
     while (lineIter.hasNext) {
       val builder = MongoDBObject.newBuilder
-      builder += "_id" -> new ObjectId(lineIter.next())
+      builder += "_id" -> lineIter.next()
       builder += "isRecord" -> isRecord
       builder += "source" -> filename
       builder += "words" -> lineIter.next().split("\t")

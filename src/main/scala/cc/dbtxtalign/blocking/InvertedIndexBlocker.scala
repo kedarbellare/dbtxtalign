@@ -2,12 +2,13 @@ package cc.dbtxtalign.blocking
 
 import cc.dbtxtalign.Mention
 import collection.mutable.{ArrayBuffer, HashMap, HashSet}
+import com.mongodb.casbah.Imports._
 
 /**
  * @author kedar
  */
 
-class InvertedIndexBlocker(val maxBlockSize: Int, val mentions: Seq[Mention],
+class InvertedIndexBlocker(val maxBlockSize: Int, val recordsColl: MongoCollection, val textsColl: MongoCollection,
                            val recordExtractor: Mention => HashSet[String],
                            val textExtractor: Mention => HashSet[String]) extends AbstractBlocker {
   private val validKeys = initValidKeys()
@@ -17,10 +18,10 @@ class InvertedIndexBlocker(val maxBlockSize: Int, val mentions: Seq[Mention],
   private def initValidKeys(): HashSet[String] = {
     val keys = new HashSet[String]
     // first collect record keys
-    for (m <- mentions if m.isRecord) keys ++= recordExtractor(m)
+    for (dbo <- recordsColl.find(); m = new Mention(dbo)) keys ++= recordExtractor(m)
     // count vector
     val counts = new HashMap[String, Int]
-    for (m <- mentions) {
+    for (dbo <- recordsColl.find() ++ textsColl.find(); m = new Mention(dbo)) {
       val mentionKeys = if (m.isRecord) recordExtractor(m) else textExtractor(m)
       mentionKeys.foreach(w => {
         counts(w) = counts.getOrElse(w, 0) + 1
@@ -38,7 +39,7 @@ class InvertedIndexBlocker(val maxBlockSize: Int, val mentions: Seq[Mention],
 
   private def initInvertedIndex(): HashMap[String, Seq[String]] = {
     val invIndex = new HashMap[String, Seq[String]]
-    for (m <- mentions) {
+    for (dbo <- recordsColl.find() ++ textsColl.find(); m = new Mention(dbo)) {
       val mentionKeys = getValidKeysFor(m)
       mentionKeys.foreach(key => {
         invIndex(key) = invIndex.getOrElse(key, Seq.empty[String]) ++ Seq(m.id)
@@ -56,7 +57,7 @@ class InvertedIndexBlocker(val maxBlockSize: Int, val mentions: Seq[Mention],
 
   private def initPairs(): HashSet[(String, String)] = {
     val idPairs = new HashSet[(String, String)]
-    for (m <- mentions) {
+    for (dbo <- recordsColl.find() ++ textsColl.find(); m = new Mention(dbo)) {
       val nbrIds = getNeighborIds(m)
       nbrIds.foreach(id => idPairs += orderedIds(m.id, id))
     }

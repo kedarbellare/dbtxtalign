@@ -62,24 +62,23 @@ trait ABFTAlign extends AbstractAlign {
       featVecSeq, getSegmentationAndMaxLength_!(m, labelIndexer, maxLengths))
   }
 
-  def getBlocker(rawMentions: Seq[Mention], id2mention: HashMap[String, Mention],
-                 cluster2ids: HashMap[String, Seq[String]]): AbstractBlocker = {
-    val nameIndex1 = new InvertedIndexBlocker(250, rawMentions, {
+  def getBlocker(cluster2ids: HashMap[String, Seq[String]]): AbstractBlocker = {
+    val nameIndex1 = new InvertedIndexBlocker(250, recordsColl, textsColl, {
       m: Mention => PhraseHash.ngramsWordHash(m.extractTrueWordsFor("hotelname"), Seq(1, 2))
     }, {
       m: Mention => PhraseHash.ngramsWordHash(m.words, Seq(1, 2))
     })
-    val nameIndex2 = new InvertedIndexBlocker(25, rawMentions, {
+    val nameIndex2 = new InvertedIndexBlocker(25, recordsColl, textsColl, {
       m: Mention => PhraseHash.ngramsCharHash(m.extractTrueWordsFor("hotelname").mkString(" "), Seq(4, 5, 6))
     }, {
       m: Mention => PhraseHash.ngramsCharHash(m.words.mkString(" "), Seq(4, 5, 6))
     })
-    val areaIndex1 = new InvertedIndexBlocker(250, rawMentions, {
+    val areaIndex1 = new InvertedIndexBlocker(250, recordsColl, textsColl, {
       m: Mention => PhraseHash.ngramsWordHash(m.extractTrueWordsFor("localarea"), Seq(1, 2))
     }, {
       m: Mention => PhraseHash.ngramsWordHash(m.words, Seq(1, 2))
     })
-    val areaIndex2 = new InvertedIndexBlocker(50, rawMentions, {
+    val areaIndex2 = new InvertedIndexBlocker(50, recordsColl, textsColl, {
       m: Mention => PhraseHash.ngramsCharHash(m.extractTrueWordsFor("localarea").mkString(" "), Seq(4, 5, 6))
     }, {
       m: Mention => PhraseHash.ngramsCharHash(m.words.mkString(" "), Seq(4, 5, 6))
@@ -87,11 +86,11 @@ trait ABFTAlign extends AbstractAlign {
     val unionIndex1 = new UnionIndexBlocker(Seq(nameIndex1, nameIndex2, areaIndex1, areaIndex2), true)
 
     // recall of hash1
-    logger.info("#name1Pairs=" + nameIndex1.numPairs + " recall=" + nameIndex1.getRecall(cluster2ids, id2mention))
-    logger.info("#name2Pairs=" + nameIndex2.numPairs + " recall=" + nameIndex2.getRecall(cluster2ids, id2mention))
-    logger.info("#area1Pairs=" + areaIndex1.numPairs + " recall=" + areaIndex1.getRecall(cluster2ids, id2mention))
-    logger.info("#area2Pairs=" + areaIndex2.numPairs + " recall=" + areaIndex2.getRecall(cluster2ids, id2mention))
-    logger.info("#unionPairs=" + unionIndex1.numPairs + " recall=" + unionIndex1.getRecall(cluster2ids, id2mention, true))
+    logger.info("#name1Pairs=" + nameIndex1.numPairs + " recall=" + nameIndex1.getRecall(cluster2ids, recordsColl, textsColl))
+    logger.info("#name2Pairs=" + nameIndex2.numPairs + " recall=" + nameIndex2.getRecall(cluster2ids, recordsColl, textsColl))
+    logger.info("#area1Pairs=" + areaIndex1.numPairs + " recall=" + areaIndex1.getRecall(cluster2ids, recordsColl, textsColl))
+    logger.info("#area2Pairs=" + areaIndex2.numPairs + " recall=" + areaIndex2.getRecall(cluster2ids, recordsColl, textsColl))
+    logger.info("#unionPairs=" + unionIndex1.numPairs + " recall=" + unionIndex1.getRecall(cluster2ids, recordsColl, textsColl, true))
 
     unionIndex1
   }
@@ -171,7 +170,7 @@ object BFTApp extends ABFTAlign with HasLogger {
     val fvecExamples = rawMentions.map(toFeatVecExample(_))
 
     // 1. Calculate candidate pairs using hotelname and localarea
-    val blocker = getBlocker(rawMentions, id2mention, cluster2ids)
+    val blocker = getBlocker(cluster2ids)
 
     // 2. Find for the set of records that are candidate matches for each text
     logger.info("#maxMatched=" + getMaxRecordsMatched(rawTexts, rawRecords, blocker))

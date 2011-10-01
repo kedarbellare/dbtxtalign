@@ -79,8 +79,7 @@ trait AbstractAlign {
     adjSegmentation
   }
 
-  def getBlocker(rawMentions: Seq[Mention], id2mention: HashMap[String, Mention],
-                 cluster2ids: HashMap[String, Seq[String]]): AbstractBlocker
+  def getBlocker(cluster2ids: HashMap[String, Seq[String]]): AbstractBlocker
 
   def getFeatureSequence(m: Mention, featurizer: (String) => Int): Seq[Int] = {
     m.words.map(featurizer(_))
