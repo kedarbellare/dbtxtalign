@@ -161,26 +161,26 @@ object BFTApp extends ABFTAlign with HasLogger {
   val BIAS_MATCH = "bias_match"
   val CHAR2_JACCARD = "char_jaccard[n=2]"
   val CHAR3_JACCARD = "char_jaccard[n=3]"
-  val FUZZY_JACCARD = "fuzzy_jaccard"
-  val SOFT_JACCARD70 = "soft_jaccard[>=0.70]"
-  val SOFT_JACCARD85 = "soft_jaccard[>=0.85]"
-  val SOFT_JACCARD90 = "soft_jaccard[>=0.90]"
-  val SOFT_JACCARD95 = "soft_jaccard[>=0.95]"
-  val JACCARD_CONTAIN = "jaccard_contain"
-  val CHAR2_JACCARD_CONTAIN = "char_jaccard_contain"
+  val FUZZY_JACCARD_CONTAINS = "fuzzy_jaccard_contains"
+  val SOFT_JACCARD70_CONTAINS = "soft_jaccard_contains[>=0.70]"
+  val SOFT_JACCARD85_CONTAINS = "soft_jaccard_contains[>=0.85]"
+  val SOFT_JACCARD90_CONTAINS = "soft_jaccard_contains[>=0.90]"
+  val SOFT_JACCARD95_CONTAINS = "soft_jaccard_contains[>=0.95]"
+  val JACCARD_CONTAINS = "jaccard_contains"
+  val CHAR2_JACCARD_CONTAINS = "char_jaccard[n=2]_contains"
   val SIM_BINS = Seq(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0)
 
   alignFeatureIndexer += BIAS_MATCH
   for (s <- SIM_BINS) {
     alignFeatureIndexer += (CHAR2_JACCARD + ">=" + s)
     alignFeatureIndexer += (CHAR3_JACCARD + ">=" + s)
-    alignFeatureIndexer += (FUZZY_JACCARD + ">=" + s)
-    alignFeatureIndexer += (SOFT_JACCARD70 + ">=" + s)
-    alignFeatureIndexer += (SOFT_JACCARD85 + ">=" + s)
-    alignFeatureIndexer += (SOFT_JACCARD90 + ">=" + s)
-    alignFeatureIndexer += (SOFT_JACCARD95 + ">=" + s)
-    alignFeatureIndexer += (JACCARD_CONTAIN + ">=" + s)
-    alignFeatureIndexer += (CHAR2_JACCARD_CONTAIN + ">=" + s)
+    alignFeatureIndexer += (FUZZY_JACCARD_CONTAINS + ">=" + s)
+    alignFeatureIndexer += (SOFT_JACCARD70_CONTAINS + ">=" + s)
+    alignFeatureIndexer += (SOFT_JACCARD85_CONTAINS + ">=" + s)
+    alignFeatureIndexer += (SOFT_JACCARD90_CONTAINS + ">=" + s)
+    alignFeatureIndexer += (SOFT_JACCARD95_CONTAINS + ">=" + s)
+    alignFeatureIndexer += (JACCARD_CONTAINS + ">=" + s)
+    alignFeatureIndexer += (CHAR2_JACCARD_CONTAINS + ">=" + s)
   }
 
   def main(args: Array[String]) {
@@ -240,24 +240,24 @@ object BFTApp extends ABFTAlign with HasLogger {
       val fv = new FtrVec
       val charJacc2 = new CharJaccardScorer(2).score(phrase, otherPhrase)
       val charJacc3 = new CharJaccardScorer(3).score(phrase, otherPhrase)
-      val fuzzyJacc = new FuzzyJaccardScorer(approxTokenMatcher).score(phrase, otherPhrase)
-      val softJacc70 = new SoftJaccardScorer(0.70).score(phrase, otherPhrase)
-      val softJacc85 = new SoftJaccardScorer(0.85).score(phrase, otherPhrase)
-      val softJacc90 = new SoftJaccardScorer(0.90).score(phrase, otherPhrase)
-      val softJacc95 = new SoftJaccardScorer(0.95).score(phrase, otherPhrase)
+      val fuzzyJacc = new FuzzyJaccardContainScorer(approxTokenMatcher).score(phrase, otherPhrase)
+      val softJacc70 = new SoftJaccardContainScorer(0.70).score(phrase, otherPhrase)
+      val softJacc85 = new SoftJaccardContainScorer(0.85).score(phrase, otherPhrase)
+      val softJacc90 = new SoftJaccardContainScorer(0.90).score(phrase, otherPhrase)
+      val softJacc95 = new SoftJaccardContainScorer(0.95).score(phrase, otherPhrase)
       val jaccContain = JaccardContainScorer.score(phrase, otherPhrase)
       val charJaccContain = new CharJaccardContainScorer(2).score(phrase, otherPhrase)
       fv += alignFeatureIndexer.indexOf_?(BIAS_MATCH) -> 1.0
       for (sim <- SIM_BINS) {
         if (charJacc2 >= sim) fv += alignFeatureIndexer.indexOf_?(CHAR2_JACCARD + ">=" + sim) -> 1.0
         if (charJacc3 >= sim) fv += alignFeatureIndexer.indexOf_?(CHAR3_JACCARD + ">=" + sim) -> 1.0
-        if (fuzzyJacc >= sim) fv += alignFeatureIndexer.indexOf_?(FUZZY_JACCARD + ">=" + sim) -> 1.0
-        if (softJacc70 >= sim) fv += alignFeatureIndexer.indexOf_?(SOFT_JACCARD70 + ">=" + sim) -> 1.0
-        if (softJacc85 >= sim) fv += alignFeatureIndexer.indexOf_?(SOFT_JACCARD85 + ">=" + sim) -> 1.0
-        if (softJacc90 >= sim) fv += alignFeatureIndexer.indexOf_?(SOFT_JACCARD90 + ">=" + sim) -> 1.0
-        if (softJacc95 >= sim) fv += alignFeatureIndexer.indexOf_?(SOFT_JACCARD95 + ">=" + sim) -> 1.0
-        if (jaccContain >= sim) fv += alignFeatureIndexer.indexOf_?(JACCARD_CONTAIN + ">=" + sim) -> 1.0
-        if (charJaccContain >= sim) fv += alignFeatureIndexer.indexOf_?(CHAR2_JACCARD_CONTAIN + ">=" + sim) -> 1.0
+        if (fuzzyJacc >= sim) fv += alignFeatureIndexer.indexOf_?(FUZZY_JACCARD_CONTAINS + ">=" + sim) -> 1.0
+        if (softJacc70 >= sim) fv += alignFeatureIndexer.indexOf_?(SOFT_JACCARD70_CONTAINS + ">=" + sim) -> 1.0
+        if (softJacc85 >= sim) fv += alignFeatureIndexer.indexOf_?(SOFT_JACCARD85_CONTAINS + ">=" + sim) -> 1.0
+        if (softJacc90 >= sim) fv += alignFeatureIndexer.indexOf_?(SOFT_JACCARD90_CONTAINS + ">=" + sim) -> 1.0
+        if (softJacc95 >= sim) fv += alignFeatureIndexer.indexOf_?(SOFT_JACCARD95_CONTAINS + ">=" + sim) -> 1.0
+        if (jaccContain >= sim) fv += alignFeatureIndexer.indexOf_?(JACCARD_CONTAINS + ">=" + sim) -> 1.0
+        if (charJaccContain >= sim) fv += alignFeatureIndexer.indexOf_?(CHAR2_JACCARD_CONTAINS + ">=" + sim) -> 1.0
       }
       fv
     }

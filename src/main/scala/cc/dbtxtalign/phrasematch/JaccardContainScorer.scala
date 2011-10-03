@@ -8,8 +8,7 @@ import collection.mutable.HashSet
 
 
 object JaccardContainScorer extends AStringScorer {
-  def score(_bag1: HashSet[String], _bag2: HashSet[String]): Double = {
-    val (bag1, bag2) = if (_bag1.size <= _bag2.size) (_bag1, _bag2) else (_bag2, _bag1)
+  def score(bag1: HashSet[String], bag2: HashSet[String]): Double = {
     val numIntersection = 1.0 * bag1.filter(bag2(_)).size
     if (bag1.size == 0) 0.0
     else numIntersection / bag1.size
