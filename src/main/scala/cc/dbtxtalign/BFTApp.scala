@@ -4,6 +4,7 @@ import cc.refectorie.user.kedarb.dynprog.utils.Utils._
 import com.mongodb.casbah.Imports._
 import org.riedelcastro.nurupo.HasLogger
 import blocking.{AbstractBlocker, UnionIndexBlocker, InvertedIndexBlocker, PhraseHash}
+import params.Params
 import phrasematch._
 import mongo.KB
 import collection.mutable.{ArrayBuffer, HashMap}
@@ -153,6 +154,35 @@ object BFTFeatureVectorSequenceLoader extends ABFTAlign with HasLogger {
 }
 
 object BFTApp extends ABFTAlign with HasLogger {
+  val hotelNameIndex = labelIndexer.indexOf_!("hotelname")
+  val localAreaIndex = labelIndexer.indexOf_!("localarea")
+  val starRatingIndex = labelIndexer.indexOf_!("starrating")
+
+  val BIAS_MATCH = "bias_match"
+  val CHAR2_JACCARD = "char_jaccard[n=2]"
+  val CHAR3_JACCARD = "char_jaccard[n=3]"
+  val FUZZY_JACCARD = "fuzzy_jaccard"
+  val SOFT_JACCARD70 = "soft_jaccard[>=0.70]"
+  val SOFT_JACCARD85 = "soft_jaccard[>=0.85]"
+  val SOFT_JACCARD90 = "soft_jaccard[>=0.90]"
+  val SOFT_JACCARD95 = "soft_jaccard[>=0.95]"
+  val JACCARD_CONTAIN = "jaccard_contain"
+  val CHAR2_JACCARD_CONTAIN = "char_jaccard_contain"
+  val SIM_BINS = Seq(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0)
+
+  alignFeatureIndexer += BIAS_MATCH
+  for (s <- SIM_BINS) {
+    alignFeatureIndexer += (CHAR2_JACCARD + ">=" + s)
+    alignFeatureIndexer += (CHAR3_JACCARD + ">=" + s)
+    alignFeatureIndexer += (FUZZY_JACCARD + ">=" + s)
+    alignFeatureIndexer += (SOFT_JACCARD70 + ">=" + s)
+    alignFeatureIndexer += (SOFT_JACCARD85 + ">=" + s)
+    alignFeatureIndexer += (SOFT_JACCARD90 + ">=" + s)
+    alignFeatureIndexer += (SOFT_JACCARD95 + ">=" + s)
+    alignFeatureIndexer += (JACCARD_CONTAIN + ">=" + s)
+    alignFeatureIndexer += (CHAR2_JACCARD_CONTAIN + ">=" + s)
+  }
+
   def main(args: Array[String]) {
     val rawRecords = recordsColl.map(new Mention(_)).toArray
     val rawTexts = textsColl.map(new Mention(_)).toArray
@@ -185,17 +215,15 @@ object BFTApp extends ABFTAlign with HasLogger {
 
     // 4. WWT phase1 segment and learn from high-precision segmentations
     val approxMatchers = mapIndex(L, (l: Int) => {
-      val lbl = labelIndexer(l)
-      if (lbl == "O") new NoopScorer(0).score(_, _)
-      else if (lbl == "hotelname") new FuzzyJaccardScorer(approxTokenMatcher).score(_, _)
-      else if (lbl == "localarea") new FuzzyJaccardScorer(approxTokenMatcher).score(_, _)
+      if (l == otherLabelIndex) new NoopScorer(0).score(_, _)
+      else if (l == hotelNameIndex) new FuzzyJaccardScorer(approxTokenMatcher).score(_, _)
+      else if (l == localAreaIndex) new FuzzyJaccardScorer(approxTokenMatcher).score(_, _)
       else new SoftJaccardScorer(0.95).score(_, _)
     })
     val approxMatchThresholds = mapIndex(L, (l: Int) => {
-      val lbl = labelIndexer(l)
-      if (lbl == "O") 0.0
-      else if (lbl == "hotelname") 0.9
-      else if (lbl == "localarea") 0.9
+      if (l == otherLabelIndex) 0.0
+      else if (l == hotelNameIndex) 0.9
+      else if (l == localAreaIndex) 0.9
       else 0.99
     })
 
@@ -206,5 +234,53 @@ object BFTApp extends ABFTAlign with HasLogger {
     crfParams = learnSupervisedSegmentParamsCRF(50, hplExamples, crfParams, 1, 1)
     // crfParams.output(logger.info(_))
     decodeSegmentParamsCRF("bft.crf.true.txt", "bft.crf.pred.txt", fvecExamples.filter(_.isRecord == false), crfParams)
+
+    // 5. Do alignment using gold-standard clusters
+    def alignFeaturizer(l: Int, phrase: Seq[String], otherPhrase: Seq[String]): FtrVec = {
+      val fv = new FtrVec
+      val charJacc2 = new CharJaccardScorer(2).score(phrase, otherPhrase)
+      val charJacc3 = new CharJaccardScorer(3).score(phrase, otherPhrase)
+      val fuzzyJacc = new FuzzyJaccardScorer(approxTokenMatcher).score(phrase, otherPhrase)
+      val softJacc70 = new SoftJaccardScorer(0.70).score(phrase, otherPhrase)
+      val softJacc85 = new SoftJaccardScorer(0.85).score(phrase, otherPhrase)
+      val softJacc90 = new SoftJaccardScorer(0.90).score(phrase, otherPhrase)
+      val softJacc95 = new SoftJaccardScorer(0.95).score(phrase, otherPhrase)
+      val jaccContain = JaccardContainScorer.score(phrase, otherPhrase)
+      val charJaccContain = new CharJaccardContainScorer(2).score(phrase, otherPhrase)
+      fv += alignFeatureIndexer.indexOf_?(BIAS_MATCH) -> 1.0
+      for (sim <- SIM_BINS) {
+        if (charJacc2 >= sim) fv += alignFeatureIndexer.indexOf_?(CHAR2_JACCARD + ">=" + sim) -> 1.0
+        if (charJacc3 >= sim) fv += alignFeatureIndexer.indexOf_?(CHAR3_JACCARD + ">=" + sim) -> 1.0
+        if (fuzzyJacc >= sim) fv += alignFeatureIndexer.indexOf_?(FUZZY_JACCARD + ">=" + sim) -> 1.0
+        if (softJacc70 >= sim) fv += alignFeatureIndexer.indexOf_?(SOFT_JACCARD70 + ">=" + sim) -> 1.0
+        if (softJacc85 >= sim) fv += alignFeatureIndexer.indexOf_?(SOFT_JACCARD85 + ">=" + sim) -> 1.0
+        if (softJacc90 >= sim) fv += alignFeatureIndexer.indexOf_?(SOFT_JACCARD90 + ">=" + sim) -> 1.0
+        if (softJacc95 >= sim) fv += alignFeatureIndexer.indexOf_?(SOFT_JACCARD95 + ">=" + sim) -> 1.0
+        if (jaccContain >= sim) fv += alignFeatureIndexer.indexOf_?(JACCARD_CONTAIN + ">=" + sim) -> 1.0
+        if (charJaccContain >= sim) fv += alignFeatureIndexer.indexOf_?(CHAR2_JACCARD_CONTAIN + ">=" + sim) -> 1.0
+      }
+      fv
+    }
+
+    val alignFvecExamples = new ArrayBuffer[FeatVecAlignmentMentionExample]
+    for (m1 <- rawRecords ++ rawTexts.take(100)) {
+      val clustOpt1 = id2cluster.get(m1.id)
+      val ex = toFeatVecExample(m1)
+      val degree = rawRecords.filter(m => blocker.isPair(m.id, m1.id) && m.id != m1.id).size
+      for (m2 <- rawRecords if blocker.isPair(m1.id, m2.id) && m1.id != m2.id) {
+        val clust2 = id2cluster(m2.id)
+        val isMatch = clustOpt1.isDefined && clustOpt1.get == clust2
+        alignFvecExamples += new FeatVecAlignmentMentionExample(ex.id, ex.isRecord, ex.words, ex.possibleEnds,
+          ex.featSeq, isMatch, ex.trueSegmentation, degree, m2.id, m2.words, getSegmentation_!(m2, labelIndexer))
+      }
+    }
+    logger.info("#alignExamples=" + alignFvecExamples.size +
+      " #alignMatchExamples=" + alignFvecExamples.filter(_.trueMatch == true).size)
+
+    var params = newParams(false, true, labelIndexer, featureIndexer, alignFeatureIndexer)
+    params.setUniform_!
+    // params = new Params(crfParams.transitions, crfParams.emissions, params.aligns)
+    params = learnSupervisedAlignParamsCRF(50, alignFvecExamples, params, alignFeaturizer, 1, 1)
+    params.output(logger.info(_))
   }
 }

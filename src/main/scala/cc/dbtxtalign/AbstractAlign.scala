@@ -4,15 +4,15 @@ import blocking.AbstractBlocker
 import collection.mutable.{ArrayBuffer, HashMap}
 import java.io.PrintWriter
 import org.apache.log4j.Logger
-import params.{EmissionParams, TransitionParams, SegmentParams}
 import cc.refectorie.user.kedarb.dynprog.types.{ParamUtils, FtrVec, Indexer}
 import cc.refectorie.user.kedarb.dynprog.utils.Utils._
 import cc.refectorie.user.kedarb.dynprog.segment._
 import cc.refectorie.user.kedarb.dynprog.{ProbStats, InferSpec}
 import optimization.linesearch.ArmijoLineSearchMinimization
-import optimization.stopCriteria.AverageValueDifference
 import optimization.gradientBasedMethods.stats.OptimizerStats
 import optimization.gradientBasedMethods.{Objective, Optimizer, LBFGS}
+import params._
+import optimization.stopCriteria.{AverageValueDifference, GradientL2Norm}
 
 /**
  * @author kedar
@@ -180,6 +180,23 @@ trait AbstractAlign {
     new SegmentParams(
       new TransitionParams(labelIndexer, starts, transitions),
       new EmissionParams(labelIndexer, featureIndexer, emissions))
+  }
+
+  def newParams(isProb: Boolean, isDense: Boolean,
+                labelIndexer: Indexer[String], featureIndexer: Indexer[String],
+                alignFeatureIndexer: Indexer[String]): Params = {
+    import ParamUtils._
+    val L = labelIndexer.size
+    val F = featureIndexer.size
+    val AF = alignFeatureIndexer.size
+    val starts = if (isProb) newPrVec(isDense, L) else newWtVec(isDense, L)
+    val transitions = if (isProb) newPrVecArray(isDense, L, L) else newWtVecArray(isDense, L, L)
+    val emissions = if (isProb) newPrVecArray(isDense, L, F) else newWtVecArray(isDense, L, F)
+    val aligns = if (isProb) newPrVecArray(isDense, L, AF) else newWtVecArray(isDense, L, AF)
+    new Params(
+      new TransitionParams(labelIndexer, starts, transitions),
+      new EmissionParams(labelIndexer, featureIndexer, emissions),
+      new AlignParams(labelIndexer, alignFeatureIndexer, aligns))
   }
 
   // Learning functions
@@ -397,5 +414,65 @@ trait AbstractAlign {
     segmentPerf.output(logger.info(_))
     trueOut.close()
     predOut.close()
+  }
+
+  // 3. Supervised alignment learning
+  def learnSupervisedAlignParamsCRF(numIter: Int, examples: Seq[FeatVecAlignmentMentionExample], params: Params,
+                                    alignFeaturizer: (Int, Seq[String], Seq[String]) => FtrVec,
+                                    textWeight: Double, invVariance: Double): Params = {
+    // calculate constraints once
+    val constraints = newParams(false, true, labelIndexer, featureIndexer, alignFeatureIndexer)
+    var numEx = 0
+    for (ex <- examples) {
+      val stepSize = if (ex.isRecord) 1.0 else textWeight
+      new CRFMatchSegmentationInferencer(labelIndexer, alignFeatureIndexer, maxLengths, ex, params, constraints,
+        InferSpec(0, 1, false, false, false, false, false, true, 1, stepSize),
+        true, true, alignFeaturizer).updateCounts
+      numEx += 1
+      if (numEx % 1000 == 0) logger.info("Processed [constraints] " + numEx + "/" + examples.size + " examples ...")
+    }
+    // constraints.output(logger.info(_))
+
+    val objective = new ACRFObjective[Params](params, invVariance) {
+      def logger = Logger.getLogger("supervised-crf-align-trainer")
+
+      def getValueAndGradient = {
+        val expectations = newParams(false, true, labelIndexer, featureIndexer, alignFeatureIndexer)
+        val stats = new ProbStats()
+        var numEx = 0
+        for (ex <- examples) {
+          val stepSize = if (ex.isRecord) 1.0 else textWeight
+          // constraints cost
+          val truthInfer = new CRFMatchSegmentationInferencer(labelIndexer, alignFeatureIndexer, maxLengths,
+            ex, params, constraints, InferSpec(0, 1, false, false, false, false, false, true, 1, 0),
+            true, true, alignFeaturizer)
+          // expectations
+          val predInfer = new CRFMatchSegmentationInferencer(labelIndexer, alignFeatureIndexer, maxLengths,
+            ex, params, expectations, InferSpec(0, 1, false, false, false, false, false, true, 1, -stepSize),
+            false, false, alignFeaturizer)
+          predInfer.updateCounts
+          stats += (truthInfer.stats - predInfer.stats) * stepSize
+          numEx += 1
+          if (numEx % 1000 == 0) logger.info("Processed [expectations] " + numEx + "/" + examples.size + " examples ...")
+        }
+        expectations.add_!(constraints, 1)
+        (expectations, stats)
+      }
+    }
+
+    // optimize
+    val ls = new ArmijoLineSearchMinimization
+    val stop = new AverageValueDifference(1e-3)
+    val optimizer = new LBFGS(ls, 4)
+    val stats = new OptimizerStats {
+      override def collectIterationStats(optimizer: Optimizer, objective: Objective) {
+        super.collectIterationStats(optimizer, objective)
+        logger.info("*** finished alignment+segmentation learning only epoch=" + (optimizer.getCurrentIteration + 1))
+      }
+    }
+    optimizer.setMaxIterations(numIter)
+    optimizer.optimize(objective, stats, stop)
+
+    params
   }
 }

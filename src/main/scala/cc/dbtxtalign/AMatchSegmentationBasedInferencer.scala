@@ -14,22 +14,17 @@ trait AMatchSegmentationBasedInferencer[Feature, Example <: AFeatAlignmentMentio
   extends ASegmentationBasedInferencer[Feature, MatchSegmentation, Example, Params] {
   type Widget = MatchSegmentation
 
+  lazy val degree: Int = ex.degree
+
   lazy val otherId: String = ex.otherId
 
   lazy val otherWords: Seq[String] = ex.otherWords
 
   lazy val otherSegmentation: Segmentation = ex.otherSegmentation
 
-  def scoreSimilarity(a: Int, phrase: Seq[String], otherPhrase: Seq[String]): Double
+  def scoreSimilarity(a: Int, i: Int, j: Int, oi: Int, oj: Int): Double
 
-  def updateSimilarity(a: Int, phrase: Seq[String], otherPhrase: Seq[String], v: Double)
-
-  def scoreSimilarity(a: Int, i: Int, j: Int, otherPhrase: Seq[String]): Double =
-    scoreSimilarity(a, words.slice(i, j), otherPhrase)
-
-  def updateSimilarity(a: Int, i: Int, j: Int, otherPhrase: Seq[String], v: Double) {
-    updateSimilarity(a, words.slice(i, j), otherPhrase, v)
-  }
+  def updateSimilarity(a: Int, i: Int, j: Int, oi: Int, oj: Int, v: Double)
 
   def scoreMatch(isMatch: Boolean): Double = 0.0
 
@@ -63,17 +58,17 @@ trait AMatchSegmentationBasedInferencer[Feature, Example <: AFeatAlignmentMentio
             val j = segment.end
             val segmentEmitScore = scoreTransition(a, b, i, j) + scoreEmission(b, i, j)
 
-            def addEdgeWithMatch(otherPhrase: Seq[String]) {
+            def addEdgeWithMatch(oi: Int, oj: Int) {
               if (allowedSegment(b, i, j)) H.addEdge(node, genMatchSegment(isMatch, b, j), new Info {
-                def getWeight = segmentEmitScore + {
-                  if (isMatch) scoreSimilarity(b, i, j, otherPhrase)
+                def getWeight = segmentEmitScore / degree + {
+                  if (isMatch) scoreSimilarity(b, i, j, oi, oj)
                   else 0.0
                 }
 
                 def setPosterior(prob: Double) {
-                  updateTransition(a, b, i, j, prob)
-                  updateEmission(b, i, j, prob)
-                  if (isMatch) updateSimilarity(b, i, j, otherPhrase, prob)
+                  updateTransition(a, b, i, j, prob / degree)
+                  updateEmission(b, i, j, prob / degree)
+                  if (isMatch) updateSimilarity(b, i, j, oi, oj, prob)
                 }
 
                 def choose(widget: MatchSegmentation) = {
@@ -84,14 +79,13 @@ trait AMatchSegmentationBasedInferencer[Feature, Example <: AFeatAlignmentMentio
             }
 
             // align with NULL segment
-            addEdgeWithMatch(Seq.empty[String])
+            addEdgeWithMatch(0, 0)
 
             // align with otherId's segments
             forIndex(otherSegmentation.numSegments, (k: Int) => {
               if (otherSegmentation.segment(k).label == b) {
                 val otherSegment = otherSegmentation.segment(k)
-                val otherPhrase = otherWords.slice(otherSegment.begin, otherSegment.end)
-                addEdgeWithMatch(otherPhrase)
+                addEdgeWithMatch(otherSegment.begin, otherSegment.end)
               }
             })
           })
@@ -110,17 +104,17 @@ trait AMatchSegmentationBasedInferencer[Feature, Example <: AFeatAlignmentMentio
           val j = segment.end
           val segmentEmitScore = scoreStart(a, j) + scoreEmission(a, i, j)
 
-          def addEdgeWithMatch(otherPhrase: Seq[String]) {
+          def addEdgeWithMatch(oi: Int, oj: Int) {
             if (allowedSegment(a, i, j)) H.addEdge(node, genMatchSegment(isMatch, a, j), new Info {
-              def getWeight = segmentEmitScore + {
-                if (isMatch) scoreSimilarity(a, i, j, otherPhrase)
+              def getWeight = segmentEmitScore / degree + {
+                if (isMatch) scoreSimilarity(a, i, j, oi, oj)
                 else 0.0
               }
 
               def setPosterior(prob: Double) {
-                updateStart(a, j, prob)
-                updateEmission(a, i, j, prob)
-                if (isMatch) updateSimilarity(a, i, j, otherPhrase, prob)
+                updateStart(a, j, prob / degree)
+                updateEmission(a, i, j, prob / degree)
+                if (isMatch) updateSimilarity(a, i, j, oi, oj, prob)
               }
 
               def choose(widget: MatchSegmentation) = {
@@ -131,14 +125,13 @@ trait AMatchSegmentationBasedInferencer[Feature, Example <: AFeatAlignmentMentio
           }
 
           // align with NULL segment
-          addEdgeWithMatch(Seq.empty[String])
+          addEdgeWithMatch(0, 0)
 
           // align with otherId's segments
           forIndex(otherSegmentation.numSegments, (k: Int) => {
             if (otherSegmentation.segment(k).label == a) {
               val otherSegment = otherSegmentation.segment(k)
-              val otherPhrase = otherWords.slice(otherSegment.begin, otherSegment.end)
-              addEdgeWithMatch(otherPhrase)
+              addEdgeWithMatch(otherSegment.begin, otherSegment.end)
             }
           })
         })

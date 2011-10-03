@@ -18,17 +18,17 @@ trait ASegmentationInferencer[Feature, Example <: AFeatMentionExample[Feature]]
   // allowed segment for span [i, j) for label a
   def newWidget = new Segmentation(N)
 
-  override def transitionParams = params.transitions.transitions
+  override lazy val transitionParams = params.transitions.transitions
 
-  override def transitionCounts = counts.transitions.transitions
+  override lazy val transitionCounts = counts.transitions.transitions
 
-  override def startParams = params.transitions.starts
+  override lazy val startParams = params.transitions.starts
 
-  override def startCounts = counts.transitions.starts
+  override lazy val startCounts = counts.transitions.starts
 
-  override def emissionParams = params.emissions.emissions
+  override lazy val emissionParams = params.emissions.emissions
 
-  override def emissionCounts = counts.emissions.emissions
+  override lazy val emissionCounts = counts.emissions.emissions
 
   def createHypergraph(H: Hypergraph[Segmentation]) {
     def gen(a: Int, i: Int): Object = {
@@ -78,17 +78,6 @@ trait ASegmentationInferencer[Feature, Example <: AFeatMentionExample[Feature]]
         }
       })
     })
-  }
-
-  override def updateCounts {
-    super.updateCounts
-    counts.synchronized {
-      forIndex(L, (a: Int) => {
-        forIndex(N, (k: Int) => {
-          updateSingleEmissionCached(a, k, cachedEmissionCounts(a)(k))
-        })
-      })
-    }
   }
 }
 

@@ -37,7 +37,13 @@ trait ASegmentationBasedInferencer[Feature, Widget, Example <: AFeatSegmentation
   lazy val cachedPossibleEnds: Array[Boolean] = mapIndex(N + 1, (j: Int) => ex.isPossibleEnd(j))
 
   def allowedSegmentTruth(a: Int, i: Int, j: Int): Boolean = {
-    if (trueSegmentation.contains(Segment(i, j, a))) true
+    if (a == otherLabelIndex) {
+      forIndex(i, j, (k: Int) => {
+        if (trueLabelDefined(k) && trueSegmentation.labelAt(k).get != a) return false
+      })
+      true
+    }
+    else if (trueSegmentation.contains(Segment(i, j, a))) true
     else {
       forIndex(i, j, (k: Int) => {
         if (trueLabelDefined(k)) return false
@@ -137,5 +143,16 @@ trait ASegmentationBasedInferencer[Feature, Widget, Example <: AFeatSegmentation
         }
       })
     })
+  }
+
+  override def updateCounts {
+    super.updateCounts
+    counts.synchronized {
+      forIndex(L, (a: Int) => {
+        forIndex(N, (k: Int) => {
+          updateSingleEmissionCached(a, k, cachedEmissionCounts(a)(k))
+        })
+      })
+    }
   }
 }

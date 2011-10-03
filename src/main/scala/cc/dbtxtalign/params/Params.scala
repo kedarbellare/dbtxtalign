@@ -96,6 +96,10 @@ class Params(val transitions: TransitionParams, val emissions: EmissionParams, v
     emissions.foreachVec(f)
     aligns.foreachVec(f)
   }
+
+  def getSegmentParams: SegmentParams = new SegmentParams(transitions, emissions)
+
+  def getAlignParams: AlignParams = aligns
 }
 
 object NoopParams extends AParams {
