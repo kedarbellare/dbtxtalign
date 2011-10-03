@@ -167,8 +167,8 @@ object BFTApp extends ABFTAlign with HasLogger {
   val SOFT_JACCARD90_CONTAINS = "soft_jaccard_contains[>=0.90]"
   val SOFT_JACCARD95_CONTAINS = "soft_jaccard_contains[>=0.95]"
   val JACCARD_CONTAINS = "jaccard_contains"
-  val CHAR2_JACCARD_CONTAINS = "char_jaccard[n=2]_contains"
-  val SIM_BINS = Seq(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0)
+  val CHAR2_JACCARD_CONTAINS = "char_jaccard_contains[n=2]"
+  val SIM_BINS = Seq(0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95, 1.0)
 
   alignFeatureIndexer += BIAS_MATCH
   for (s <- SIM_BINS) {
@@ -263,18 +263,23 @@ object BFTApp extends ABFTAlign with HasLogger {
     }
 
     val alignFvecExamples = new ArrayBuffer[FeatVecAlignmentMentionExample]
-    for (m1 <- rawRecords ++ rawTexts.take(100)) {
+    var maxDegree = 0
+    for (m1 <- rawMentions) {
       val clustOpt1 = id2cluster.get(m1.id)
       val ex = toFeatVecExample(m1)
+      var degree = 0
       for (m2 <- rawRecords if blocker.isPair(m1.id, m2.id) && m1.id != m2.id) {
         val clust2 = id2cluster(m2.id)
         val isMatch = clustOpt1.isDefined && clustOpt1.get == clust2
+        degree += 1
         alignFvecExamples += new FeatVecAlignmentMentionExample(ex.id, ex.isRecord, ex.words, ex.possibleEnds,
           ex.featSeq, isMatch, ex.trueSegmentation, m2.id, m2.words, getSegmentation_!(m2, labelIndexer))
       }
+      if (degree > maxDegree) maxDegree = degree
     }
     logger.info("#alignExamples=" + alignFvecExamples.size +
-      " #alignMatchExamples=" + alignFvecExamples.filter(_.trueMatch == true).size)
+      " #alignMatchExamples=" + alignFvecExamples.filter(_.trueMatch == true).size +
+      " maxDegree=" + maxDegree)
 
     var params = newParams(false, true, labelIndexer, featureIndexer, alignFeatureIndexer)
     params.setUniform_!
