@@ -266,12 +266,11 @@ object BFTApp extends ABFTAlign with HasLogger {
     for (m1 <- rawRecords ++ rawTexts.take(100)) {
       val clustOpt1 = id2cluster.get(m1.id)
       val ex = toFeatVecExample(m1)
-      val degree = rawRecords.filter(m => blocker.isPair(m.id, m1.id) && m.id != m1.id).size
       for (m2 <- rawRecords if blocker.isPair(m1.id, m2.id) && m1.id != m2.id) {
         val clust2 = id2cluster(m2.id)
         val isMatch = clustOpt1.isDefined && clustOpt1.get == clust2
         alignFvecExamples += new FeatVecAlignmentMentionExample(ex.id, ex.isRecord, ex.words, ex.possibleEnds,
-          ex.featSeq, isMatch, ex.trueSegmentation, degree, m2.id, m2.words, getSegmentation_!(m2, labelIndexer))
+          ex.featSeq, isMatch, ex.trueSegmentation, m2.id, m2.words, getSegmentation_!(m2, labelIndexer))
       }
     }
     logger.info("#alignExamples=" + alignFvecExamples.size +

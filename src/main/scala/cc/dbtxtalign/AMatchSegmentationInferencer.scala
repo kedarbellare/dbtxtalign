@@ -38,6 +38,18 @@ class CRFMatchSegmentationInferencer(val labelIndexer: Indexer[String], val alig
   extends AMatchSegmentationInferencer[FtrVec, FeatVecAlignmentMentionExample] {
   lazy val featSeq: Seq[FtrVec] = ex.featSeq
 
+  override def scoreStart(a: Int, j: Int) = 0
+
+  override def scoreTransition(a: Int, b: Int, i: Int, j: Int) = 0
+
+  override def scoreEmission(a: Int, i: Int, j: Int) = 0
+
+  override def updateStart(a: Int, j: Int, x: Double) {}
+
+  override def updateTransition(a: Int, b: Int, i: Int, j: Int, x: Double) {}
+
+  override def updateEmission(a: Int, i: Int, j: Int, x: Double) {}
+
   def scoreSingleEmission(a: Int, k: Int) = score(emissionParams(a), featSeq(k))
 
   def updateSingleEmissionCached(a: Int, k: Int, x: Double) {

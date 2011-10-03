@@ -14,8 +14,6 @@ trait AMatchSegmentationBasedInferencer[Feature, Example <: AFeatAlignmentMentio
   extends ASegmentationBasedInferencer[Feature, MatchSegmentation, Example, Params] {
   type Widget = MatchSegmentation
 
-  lazy val degree: Int = ex.degree
-
   lazy val otherId: String = ex.otherId
 
   lazy val otherWords: Seq[String] = ex.otherWords
@@ -60,14 +58,14 @@ trait AMatchSegmentationBasedInferencer[Feature, Example <: AFeatAlignmentMentio
 
             def addEdgeWithMatch(oi: Int, oj: Int) {
               if (allowedSegment(b, i, j)) H.addEdge(node, genMatchSegment(isMatch, b, j), new Info {
-                def getWeight = segmentEmitScore / degree + {
+                def getWeight = segmentEmitScore + {
                   if (isMatch) scoreSimilarity(b, i, j, oi, oj)
                   else 0.0
                 }
 
                 def setPosterior(prob: Double) {
-                  updateTransition(a, b, i, j, prob / degree)
-                  updateEmission(b, i, j, prob / degree)
+                  updateTransition(a, b, i, j, prob)
+                  updateEmission(b, i, j, prob)
                   if (isMatch) updateSimilarity(b, i, j, oi, oj, prob)
                 }
 
@@ -106,14 +104,14 @@ trait AMatchSegmentationBasedInferencer[Feature, Example <: AFeatAlignmentMentio
 
           def addEdgeWithMatch(oi: Int, oj: Int) {
             if (allowedSegment(a, i, j)) H.addEdge(node, genMatchSegment(isMatch, a, j), new Info {
-              def getWeight = segmentEmitScore / degree + {
+              def getWeight = segmentEmitScore + {
                 if (isMatch) scoreSimilarity(a, i, j, oi, oj)
                 else 0.0
               }
 
               def setPosterior(prob: Double) {
-                updateStart(a, j, prob / degree)
-                updateEmission(a, i, j, prob / degree)
+                updateStart(a, j, prob)
+                updateEmission(a, i, j, prob)
                 if (isMatch) updateSimilarity(a, i, j, oi, oj, prob)
               }
 

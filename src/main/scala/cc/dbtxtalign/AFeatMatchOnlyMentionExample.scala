@@ -21,9 +21,7 @@ trait AFeatAlignmentSegmentationExample[Feature, Widget] extends AFeatSegmentati
 trait AFeatMatchOnlyMentionExample[Feature]
   extends AFeatMentionExample[Feature] with AFeatAlignmentSegmentationExample[Feature, Segmentation]
 
-trait AFeatAlignmentMentionExample[Feature] extends AFeatAlignmentSegmentationExample[Feature, MatchSegmentation] {
-  def degree: Int
-}
+trait AFeatAlignmentMentionExample[Feature] extends AFeatAlignmentSegmentationExample[Feature, MatchSegmentation]
 
 class FeatMatchOnlyMentionExample(val id: String, val isRecord: Boolean, val words: Seq[String],
                                   val possibleEnds: Seq[Boolean], val featSeq: Seq[Int],
@@ -41,7 +39,7 @@ class FeatVecMatchOnlyMentionExample(val id: String, val isRecord: Boolean, val 
 
 class FeatAlignmentMentionExample(val id: String, val isRecord: Boolean, val words: Seq[String],
                                   val possibleEnds: Seq[Boolean], val featSeq: Seq[Int],
-                                  val trueMatch: Boolean, val trueSegmentation: Segmentation, val degree: Int,
+                                  val trueMatch: Boolean, val trueSegmentation: Segmentation,
                                   val otherId: String, val otherWords: Seq[String],
                                   val otherSegmentation: Segmentation) extends AFeatAlignmentMentionExample[Int] {
   val trueWidget = new MatchSegmentation(trueMatch, trueSegmentation)
@@ -49,7 +47,7 @@ class FeatAlignmentMentionExample(val id: String, val isRecord: Boolean, val wor
 
 class FeatVecAlignmentMentionExample(val id: String, val isRecord: Boolean, val words: Seq[String],
                                      val possibleEnds: Seq[Boolean], val featSeq: Seq[FtrVec],
-                                     val trueMatch: Boolean, val trueSegmentation: Segmentation, val degree: Int,
+                                     val trueMatch: Boolean, val trueSegmentation: Segmentation, 
                                      val otherId: String, val otherWords: Seq[String],
                                      val otherSegmentation: Segmentation) extends AFeatAlignmentMentionExample[FtrVec] {
   val trueWidget = new MatchSegmentation(trueMatch, trueSegmentation)
