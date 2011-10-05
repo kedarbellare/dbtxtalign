@@ -4,37 +4,43 @@ import cc.refectorie.user.kedarb.dynprog.AParams
 import cc.refectorie.user.kedarb.dynprog.types.Hypergraph
 import cc.refectorie.user.kedarb.dynprog.segment.{Segment, Segmentation}
 import cc.refectorie.user.kedarb.dynprog.utils.Utils._
+import collection.mutable.HashSet
 
 /**
  * @author kedar
  */
 
-
 trait AMatchSegmentationBasedInferencer[Feature, Example <: AFeatAlignmentMentionExample[Feature], Params <: AParams]
   extends ASegmentationBasedInferencer[Feature, MatchSegmentation, Example, Params] {
   type Widget = MatchSegmentation
 
-  lazy val otherId: String = ex.otherId
+  lazy val otherIds: Seq[String] = ex.otherIds
 
-  lazy val otherWords: Seq[String] = ex.otherWords
+  lazy val otherWordsSeq: Seq[Seq[String]] = ex.otherWordsSeq
 
-  lazy val otherSegmentation: Segmentation = ex.otherSegmentation
+  lazy val otherSegmentations: Seq[Segmentation] = ex.otherSegmentations
 
-  def scoreSimilarity(a: Int, i: Int, j: Int, oi: Int, oj: Int): Double
+  def scoreSimilarity(otherIndex: Int, b: Int, i: Int, j: Int, oi: Int, oj: Int): Double
 
-  def updateSimilarity(a: Int, i: Int, j: Int, oi: Int, oj: Int, v: Double)
+  def updateSimilarity(otherIndex: Int, b: Int, i: Int, j: Int, oi: Int, oj: Int, v: Double)
 
-  def scoreMatch(isMatch: Boolean): Double = 0.0
+  def scoreMatch(otherIndex: Int): Double = 0.0
 
-  def updateMatch(isMatch: Boolean, v: Double) {}
+  def updateMatch(otherIndex: Int, v: Double) {}
 
-  def newWidget = new Widget(false, new Segmentation(N))
+  def newWidget = new Widget(new HashSet[String], new Segmentation(N))
 
   def trueMatchInfer: Boolean
 
   def trueSegmentInfer: Boolean
 
-  def allowedMatch(isMatch: Boolean): Boolean = (!trueInfer && !trueMatchInfer) || isMatch == ex.trueWidget.isMatch
+  def allowedMatch(otherId: Option[String]): Boolean = {
+    if (!trueInfer && !trueMatchInfer) true
+    else {
+      if (otherId.isDefined) ex.trueWidget.matchIds(otherId.get)
+      else ex.trueWidget.matchIds.isEmpty
+    }
+  }
 
   override def allowedSegment(a: Int, i: Int, j: Int): Boolean = {
     if (trueSegmentInfer) {
@@ -45,10 +51,10 @@ trait AMatchSegmentationBasedInferencer[Feature, Example <: AFeatAlignmentMentio
   }
 
   def createHypergraph(H: Hypergraph[Widget]) {
-    def genMatchSegment(isMatch: Boolean, a: Int, i: Int): Object = {
+    def genMatchTransition(otherIndex: Int, a: Int, i: Int): Object = {
       if (i == N) H.endNode
       else {
-        val node = (isMatch, a, i)
+        val node = (otherIndex, a, i)
         if (H.addSumNode(node)) {
           genTransitionSegments(a, i, (segment: Segment) => {
             require(segment.begin == i, "Invalid begin index " + segment.begin + " != " + i + " for transition!")
@@ -57,16 +63,17 @@ trait AMatchSegmentationBasedInferencer[Feature, Example <: AFeatAlignmentMentio
             val segmentEmitScore = scoreTransition(a, b, i, j) + scoreEmission(b, i, j)
 
             def addEdgeWithMatch(oi: Int, oj: Int) {
-              if (allowedSegment(b, i, j)) H.addEdge(node, genMatchSegment(isMatch, b, j), new Info {
+              H.addEdge(node, genMatchTransition(otherIndex, b, j), new Info {
                 def getWeight = segmentEmitScore + {
-                  if (isMatch) scoreSimilarity(b, i, j, oi, oj)
+                  if (otherIndex >= 0 && otherIndex < otherIds.size) scoreSimilarity(otherIndex, b, i, j, oi, oj)
                   else 0.0
                 }
 
                 def setPosterior(prob: Double) {
                   updateTransition(a, b, i, j, prob)
                   updateEmission(b, i, j, prob)
-                  if (isMatch) updateSimilarity(b, i, j, oi, oj, prob)
+                  if (otherIndex >= 0 && otherIndex < otherIds.size)
+                    updateSimilarity(otherIndex, a, i, j, oi, oj, prob)
                 }
 
                 def choose(widget: MatchSegmentation) = {
@@ -80,39 +87,40 @@ trait AMatchSegmentationBasedInferencer[Feature, Example <: AFeatAlignmentMentio
             addEdgeWithMatch(0, 0)
 
             // align with otherId's segments
-            forIndex(otherSegmentation.numSegments, (k: Int) => {
-              if (otherSegmentation.segment(k).label == b) {
-                val otherSegment = otherSegmentation.segment(k)
-                addEdgeWithMatch(otherSegment.begin, otherSegment.end)
-              }
-            })
+            if (otherIndex >= 0 && otherIndex < otherSegmentations.size)
+              forIndex(otherSegmentations(otherIndex).numSegments, (k: Int) => {
+                if (otherSegmentations(otherIndex).segment(k).label == b) {
+                  val otherSegment = otherSegmentations(otherIndex).segment(k)
+                  addEdgeWithMatch(otherSegment.begin, otherSegment.end)
+                }
+              })
           })
         }
         node
       }
     }
 
-    def genMatch(isMatch: Boolean): Object = {
-      val node = (isMatch, 0)
+    def genMatchStart(otherIndex: Int): Object = {
+      val node = (otherIndex, 0)
       if (H.addSumNode(node)) {
         genStartSegments((segment: Segment) => {
           require(segment.begin == 0, "Invalid begin index at start!")
-          val a = segment.label
+          val b = segment.label
           val i = segment.begin
           val j = segment.end
-          val segmentEmitScore = scoreStart(a, j) + scoreEmission(a, i, j)
+          val segmentEmitScore = scoreStart(b, j) + scoreEmission(b, i, j)
 
           def addEdgeWithMatch(oi: Int, oj: Int) {
-            if (allowedSegment(a, i, j)) H.addEdge(node, genMatchSegment(isMatch, a, j), new Info {
+            if (allowedSegment(b, i, j)) H.addEdge(node, genMatchTransition(otherIndex, b, j), new Info {
               def getWeight = segmentEmitScore + {
-                if (isMatch) scoreSimilarity(a, i, j, oi, oj)
+                if (otherIndex >= 0 && otherIndex < otherIds.size) scoreSimilarity(otherIndex, b, i, j, oi, oj)
                 else 0.0
               }
 
               def setPosterior(prob: Double) {
-                updateStart(a, j, prob)
-                updateEmission(a, i, j, prob)
-                if (isMatch) updateSimilarity(a, i, j, oi, oj, prob)
+                updateStart(b, j, prob)
+                updateEmission(b, i, j, prob)
+                if (otherIndex >= 0 && otherIndex < otherIds.size) updateSimilarity(otherIndex, b, i, j, oi, oj, prob)
               }
 
               def choose(widget: MatchSegmentation) = {
@@ -126,30 +134,34 @@ trait AMatchSegmentationBasedInferencer[Feature, Example <: AFeatAlignmentMentio
           addEdgeWithMatch(0, 0)
 
           // align with otherId's segments
-          forIndex(otherSegmentation.numSegments, (k: Int) => {
-            if (otherSegmentation.segment(k).label == a) {
-              val otherSegment = otherSegmentation.segment(k)
-              addEdgeWithMatch(otherSegment.begin, otherSegment.end)
-            }
-          })
+          if (otherIndex >= 0 && otherIndex < otherSegmentations.size)
+            forIndex(otherSegmentations(otherIndex).numSegments, (k: Int) => {
+              if (otherSegmentations(otherIndex).segment(k).label == b) {
+                val otherSegment = otherSegmentations(otherIndex).segment(k)
+                addEdgeWithMatch(otherSegment.begin, otherSegment.end)
+              }
+            })
         })
       }
       node
     }
 
-    for (isMatch <- Seq(true, false)) {
-      if (allowedMatch(isMatch)) H.addEdge(H.sumStartNode(), genMatch(isMatch), new Info {
-        def getWeight = scoreMatch(isMatch)
+    for (otherIndex <- -1 until otherIds.size) {
+      val otherIdOpt = if (otherIndex < 0) None else Some(otherIds(otherIndex))
+      if (allowedMatch(otherIdOpt)) {
+        H.addEdge(H.sumStartNode(), genMatchStart(otherIndex), new Info {
+          def getWeight = scoreMatch(otherIndex)
 
-        def setPosterior(prob: Double) {
-          updateMatch(isMatch, prob)
-        }
+          def setPosterior(prob: Double) {
+            updateMatch(otherIndex, prob)
+          }
 
-        def choose(widget: MatchSegmentation) = {
-          widget.isMatch = isMatch
-          widget
-        }
-      })
+          def choose(widget: MatchSegmentation) = {
+            if (otherIndex >= 0) widget.matchIds += otherIds(otherIndex)
+            widget
+          }
+        })
+      }
     }
   }
 }

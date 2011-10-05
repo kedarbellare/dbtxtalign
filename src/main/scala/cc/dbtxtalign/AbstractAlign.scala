@@ -115,6 +115,8 @@ trait AbstractAlign {
     })
   }
 
+  def getAlignFeatureVector(l: Int, phrase: Seq[String], otherPhrase: Seq[String]): FtrVec = new FtrVec
+
   def getSegmentation_!(m: Mention, indexer: Indexer[String]): Segmentation = {
     Segmentation.fromBIO(m.trueBioLabels, indexer.indexOf_!(_))
   }
@@ -182,6 +184,15 @@ trait AbstractAlign {
       new EmissionParams(labelIndexer, featureIndexer, emissions))
   }
 
+  def newAlignParams(isProb: Boolean, isDense: Boolean,
+                      labelIndexer: Indexer[String], alignFeatureIndexer: Indexer[String]): AlignParams = {
+    import ParamUtils._
+    val L = labelIndexer.size
+    val AF = alignFeatureIndexer.size
+    val labelAligns = if (isProb) newPrVecArray(isDense, L, AF) else newWtVecArray(isDense, L, AF)
+    new AlignParams(labelIndexer, alignFeatureIndexer, labelAligns)
+  }
+
   def newParams(isProb: Boolean, isDense: Boolean,
                 labelIndexer: Indexer[String], featureIndexer: Indexer[String],
                 alignFeatureIndexer: Indexer[String]): Params = {
@@ -224,23 +235,22 @@ trait AbstractAlign {
     segparams
   }
 
-  def decodeSegmentParamsHMM(trueFilename: String, predFilename: String,
-                             examples: Seq[FeatMentionExample], segparams: SegmentParams) {
+  def decodeSegmentation(trueFilename: String, predFilename: String, mentions: Seq[Mention],
+                          decoder: (Mention) => Segmentation) {
     val trueOut = new PrintWriter(trueFilename)
     val predOut = new PrintWriter(predFilename)
     val segmentPerf = new SegmentSegmentationEvaluator("textSegEval", labelIndexer)
     val tokenPerf = new SegmentLabelAccuracyEvaluator("textLblEval")
     val perLabelPerf = new SegmentPerLabelAccuracyEvaluator("textPerLblEval", labelIndexer)
-    for (ex <- examples if !ex.isRecord) {
-      val inferencer = new HMMSegmentationInferencer(labelIndexer, maxLengths, ex, segparams, segparams,
-        InferSpec(0, 1, false, ex.isRecord, true, false, true, false, 1, 0))
-      val predSeg = adjustSegmentation(ex.words, inferencer.bestWidget)
-      val trueSeg = adjustSegmentation(ex.words, ex.trueSegmentation)
+    for (m <- mentions if !m.isRecord) {
+      val predWidget = decoder(m)
+      val predSeg = adjustSegmentation(m.words, predWidget)
+      val trueSeg = adjustSegmentation(m.words, getSegmentation_!(m, labelIndexer))
       tokenPerf.add(trueSeg, predSeg)
       segmentPerf.add(trueSeg, predSeg)
       perLabelPerf.add(trueSeg, predSeg)
-      predOut.println(SegmentationHelper.toFullString(ex.words, predSeg, labelIndexer(_)))
-      trueOut.println(SegmentationHelper.toFullString(ex.words, trueSeg, labelIndexer(_)))
+      predOut.println(SegmentationHelper.toFullString(m.words, predSeg, labelIndexer(_)))
+      trueOut.println(SegmentationHelper.toFullString(m.words, trueSeg, labelIndexer(_)))
     }
     tokenPerf.output(logger.info(_))
     perLabelPerf.output(logger.info(_))
@@ -298,7 +308,7 @@ trait AbstractAlign {
 
     params
   }
-
+/*
   def getHighPrecisionLabeledExamples(fvecExamples: Seq[FeatVecMentionExample],
                                       blocker: AbstractBlocker,
                                       approxMatchers: Seq[(Seq[String], Seq[String]) => Double],
@@ -391,31 +401,6 @@ trait AbstractAlign {
     hplExamples.toSeq
   }
 
-  def decodeSegmentParamsCRF(trueFilename: String, predFilename: String,
-                             examples: Seq[FeatVecMentionExample], segparams: SegmentParams) {
-    val trueOut = new PrintWriter(trueFilename)
-    val predOut = new PrintWriter(predFilename)
-    val segmentPerf = new SegmentSegmentationEvaluator("textSegEval", labelIndexer)
-    val tokenPerf = new SegmentLabelAccuracyEvaluator("textLblEval")
-    val perLabelPerf = new SegmentPerLabelAccuracyEvaluator("textPerLblEval", labelIndexer)
-    for (ex <- examples if !ex.isRecord) {
-      val inferencer = new CRFSegmentationInferencer(labelIndexer, maxLengths, ex, segparams, segparams,
-        InferSpec(0, 1, false, ex.isRecord, true, false, false, true, 1, 0))
-      val predSeg = adjustSegmentation(ex.words, inferencer.bestWidget)
-      val trueSeg = adjustSegmentation(ex.words, ex.trueSegmentation)
-      tokenPerf.add(trueSeg, predSeg)
-      segmentPerf.add(trueSeg, predSeg)
-      perLabelPerf.add(trueSeg, predSeg)
-      predOut.println(SegmentationHelper.toFullString(ex.words, predSeg, labelIndexer(_)))
-      trueOut.println(SegmentationHelper.toFullString(ex.words, trueSeg, labelIndexer(_)))
-    }
-    tokenPerf.output(logger.info(_))
-    perLabelPerf.output(logger.info(_))
-    segmentPerf.output(logger.info(_))
-    trueOut.close()
-    predOut.close()
-  }
-
   // 3. Supervised alignment learning
   def learnSupervisedAlignParamsCRF(numIter: Int, examples: Seq[FeatVecAlignmentMentionExample], params: Params,
                                     alignFeaturizer: (Int, Seq[String], Seq[String]) => FtrVec,
@@ -475,4 +460,5 @@ trait AbstractAlign {
 
     params
   }
+  */
 }

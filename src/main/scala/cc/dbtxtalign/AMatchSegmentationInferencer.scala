@@ -27,28 +27,17 @@ trait AMatchSegmentationInferencer[Feature, Example <: AFeatAlignmentMentionExam
 
   override lazy val alignCounts = counts.aligns.labelAligns
 
-  def alignFeatureIndexer: Indexer[String]
+  // (label, phrase, otherPhrase) => alignFeatureVector
+  def alignFeaturizer: (Int, Seq[String], Seq[String]) => FtrVec
 }
 
-class CRFMatchSegmentationInferencer(val labelIndexer: Indexer[String], val alignFeatureIndexer: Indexer[String],
-                                     val maxLengths: Seq[Int], val ex: FeatVecAlignmentMentionExample,
+class CRFMatchSegmentationInferencer(val labelIndexer: Indexer[String], val maxLengths: Seq[Int],
+                                     val ex: FeatVecAlignmentMentionExample,
                                      val params: Params, val counts: Params, val ispec: InferSpec,
                                      val trueMatchInfer: Boolean, val trueSegmentInfer: Boolean,
-                                     val alignFeatureVector: (Int, Seq[String], Seq[String]) => FtrVec)
+                                     val alignFeaturizer: (Int, Seq[String], Seq[String]) => FtrVec)
   extends AMatchSegmentationInferencer[FtrVec, FeatVecAlignmentMentionExample] {
   lazy val featSeq: Seq[FtrVec] = ex.featSeq
-
-  override def scoreStart(a: Int, j: Int) = 0
-
-  override def scoreTransition(a: Int, b: Int, i: Int, j: Int) = 0
-
-  override def scoreEmission(a: Int, i: Int, j: Int) = 0
-
-  override def updateStart(a: Int, j: Int, x: Double) {}
-
-  override def updateTransition(a: Int, b: Int, i: Int, j: Int, x: Double) {}
-
-  override def updateEmission(a: Int, i: Int, j: Int, x: Double) {}
 
   def scoreSingleEmission(a: Int, k: Int) = score(emissionParams(a), featSeq(k))
 
@@ -56,18 +45,19 @@ class CRFMatchSegmentationInferencer(val labelIndexer: Indexer[String], val alig
     if (!x.isNaN) update(emissionCounts(a), featSeq(k), x)
   }
 
-  def scoreSimilarity(a: Int, i: Int, j: Int, oi: Int, oj: Int) = {
-    val key = (a, i, j, oi, oj)
-    if (!ex.cachedAlignFeatures.contains(key))
-      ex.cachedAlignFeatures(key) = alignFeatureVector(a, words.slice(i, j), otherWords.slice(oi, oj))
-    score(alignParams(a), ex.cachedAlignFeatures(key))
+  def scoreSimilarity(otherIndex: Int, a: Int, i: Int, j: Int, oi: Int, oj: Int) = {
+    //    val key = SegmentAlignment(otherIds(otherIndex), a, i, j, oi, oj)
+    //    if (!ex.cachedAlignFeatures.contains(key))
+    //      ex.cachedAlignFeatures(key) = alignFeaturizer(a, words.slice(i, j), otherWordsSeq(otherIndex).slice(oi, oj))
+    //    score(alignParams(a), ex.cachedAlignFeatures(key))
+    score(alignParams(a), alignFeaturizer(a, words.slice(i, j), otherWordsSeq(otherIndex).slice(oi, oj)))
   }
 
-  def updateSimilarity(a: Int, i: Int, j: Int, oi: Int, oj: Int, v: Double) = {
-    val key = (a, i, j, oi, oj)
-    if (!ex.cachedAlignFeatures.contains(key))
-      ex.cachedAlignFeatures(key) = alignFeatureVector(a, words.slice(i, j), otherWords.slice(oi, oj))
-    update(alignCounts(a), ex.cachedAlignFeatures(key), v)
+  def updateSimilarity(otherIndex: Int, a: Int, i: Int, j: Int, oi: Int, oj: Int, v: Double) {
+    //    val key = SegmentAlignment(otherIds(otherIndex), a, i, j, oi, oj)
+    //    if (!ex.cachedAlignFeatures.contains(key))
+    //      ex.cachedAlignFeatures(key) = alignFeaturizer(a, words.slice(i, j), otherWordsSeq(otherIndex).slice(oi, oj))
+    //    update(alignCounts(a), ex.cachedAlignFeatures(key), v)
+    update(alignCounts(a), alignFeaturizer(a, words.slice(i, j), otherWordsSeq(otherIndex).slice(oi, oj)), v)
   }
 }
-

@@ -59,7 +59,7 @@ class InvertedIndexBlocker(val maxBlockSize: Int, val recordsColl: MongoCollecti
     val idPairs = new HashSet[(String, String)]
     for (dbo <- recordsColl.find() ++ textsColl.find(); m = new Mention(dbo)) {
       val nbrIds = getNeighborIds(m)
-      nbrIds.foreach(id => idPairs += orderedIds(m.id, id))
+      nbrIds.filter(_ != m.id).foreach(id => idPairs += orderedIds(m.id, id))
     }
     idPairs
   }

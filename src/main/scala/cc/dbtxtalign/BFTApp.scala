@@ -4,11 +4,11 @@ import cc.refectorie.user.kedarb.dynprog.utils.Utils._
 import com.mongodb.casbah.Imports._
 import org.riedelcastro.nurupo.HasLogger
 import blocking.{AbstractBlocker, UnionIndexBlocker, InvertedIndexBlocker, PhraseHash}
-import params.Params
 import phrasematch._
 import mongo.KB
-import collection.mutable.{ArrayBuffer, HashMap}
 import cc.refectorie.user.kedarb.dynprog.types.FtrVec
+import cc.refectorie.user.kedarb.dynprog.InferSpec
+import collection.mutable.{HashSet, ArrayBuffer, HashMap}
 
 /**
  * @author kedar
@@ -160,27 +160,77 @@ object BFTApp extends ABFTAlign with HasLogger {
 
   val BIAS_MATCH = "bias_match"
   val CHAR2_JACCARD = "char_jaccard[n=2]"
+  val CHAR2_JACCARD_CONTAINS = "char_jaccard_contains[n=2]"
   val CHAR3_JACCARD = "char_jaccard[n=3]"
   val FUZZY_JACCARD_CONTAINS = "fuzzy_jaccard_contains"
+  val FUZZY_JACCARD = "fuzzy_jaccard"
+  val SOFT_JACCARD70 = "soft_jaccard[>=0.70]"
+  val SOFT_JACCARD85 = "soft_jaccard[>=0.85]"
+  val SOFT_JACCARD90 = "soft_jaccard[>=0.90]"
+  val SOFT_JACCARD95 = "soft_jaccard[>=0.95]"
   val SOFT_JACCARD70_CONTAINS = "soft_jaccard_contains[>=0.70]"
   val SOFT_JACCARD85_CONTAINS = "soft_jaccard_contains[>=0.85]"
   val SOFT_JACCARD90_CONTAINS = "soft_jaccard_contains[>=0.90]"
   val SOFT_JACCARD95_CONTAINS = "soft_jaccard_contains[>=0.95]"
+  val JACCARD = "jaccard"
   val JACCARD_CONTAINS = "jaccard_contains"
-  val CHAR2_JACCARD_CONTAINS = "char_jaccard_contains[n=2]"
   val SIM_BINS = Seq(0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95, 1.0)
 
   alignFeatureIndexer += BIAS_MATCH
   for (s <- SIM_BINS) {
     alignFeatureIndexer += (CHAR2_JACCARD + ">=" + s)
+    alignFeatureIndexer += (CHAR2_JACCARD_CONTAINS + ">=" + s)
     alignFeatureIndexer += (CHAR3_JACCARD + ">=" + s)
     alignFeatureIndexer += (FUZZY_JACCARD_CONTAINS + ">=" + s)
+    alignFeatureIndexer += (FUZZY_JACCARD + ">=" + s)
+    alignFeatureIndexer += (SOFT_JACCARD70 + ">=" + s)
+    alignFeatureIndexer += (SOFT_JACCARD85 + ">=" + s)
+    alignFeatureIndexer += (SOFT_JACCARD90 + ">=" + s)
+    alignFeatureIndexer += (SOFT_JACCARD95 + ">=" + s)
     alignFeatureIndexer += (SOFT_JACCARD70_CONTAINS + ">=" + s)
     alignFeatureIndexer += (SOFT_JACCARD85_CONTAINS + ">=" + s)
     alignFeatureIndexer += (SOFT_JACCARD90_CONTAINS + ">=" + s)
     alignFeatureIndexer += (SOFT_JACCARD95_CONTAINS + ">=" + s)
+    alignFeatureIndexer += (JACCARD + ">=" + s)
     alignFeatureIndexer += (JACCARD_CONTAINS + ">=" + s)
-    alignFeatureIndexer += (CHAR2_JACCARD_CONTAINS + ">=" + s)
+  }
+
+  override def getAlignFeatureVector(l: Int, phrase: Seq[String], otherPhrase: Seq[String]): FtrVec = {
+    val fv = new FtrVec
+    val charJacc2 = new CharJaccardScorer(2).score(phrase, otherPhrase)
+    val charJaccContains = new CharJaccardContainScorer(2).score(phrase, otherPhrase)
+    val charJacc3 = new CharJaccardScorer(3).score(phrase, otherPhrase)
+    val fuzzyJacc = new FuzzyJaccardScorer(approxTokenMatcher).score(phrase, otherPhrase)
+    val fuzzyJaccContains = new FuzzyJaccardContainScorer(approxTokenMatcher).score(phrase, otherPhrase)
+    val softJacc70 = new SoftJaccardScorer(0.70).score(phrase, otherPhrase)
+    val softJacc85 = new SoftJaccardScorer(0.85).score(phrase, otherPhrase)
+    val softJacc90 = new SoftJaccardScorer(0.90).score(phrase, otherPhrase)
+    val softJacc95 = new SoftJaccardScorer(0.95).score(phrase, otherPhrase)
+    val softJacc70Contains = new SoftJaccardContainScorer(0.70).score(phrase, otherPhrase)
+    val softJacc85Contains = new SoftJaccardContainScorer(0.85).score(phrase, otherPhrase)
+    val softJacc90Contains = new SoftJaccardContainScorer(0.90).score(phrase, otherPhrase)
+    val softJacc95Contains = new SoftJaccardContainScorer(0.95).score(phrase, otherPhrase)
+    val jacc = JaccardScorer.score(phrase, otherPhrase)
+    val jaccContains = JaccardContainScorer.score(phrase, otherPhrase)
+    fv += alignFeatureIndexer.indexOf_?(BIAS_MATCH) -> 1.0
+    for (sim <- SIM_BINS) {
+      if (charJacc2 >= sim) fv += alignFeatureIndexer.indexOf_?(CHAR2_JACCARD + ">=" + sim) -> 1.0
+      if (charJaccContains >= sim) fv += alignFeatureIndexer.indexOf_?(CHAR2_JACCARD_CONTAINS + ">=" + sim) -> 1.0
+      if (charJacc3 >= sim) fv += alignFeatureIndexer.indexOf_?(CHAR3_JACCARD + ">=" + sim) -> 1.0
+      if (fuzzyJacc >= sim) fv += alignFeatureIndexer.indexOf_?(FUZZY_JACCARD + ">=" + sim) -> 1.0
+      if (fuzzyJaccContains >= sim) fv += alignFeatureIndexer.indexOf_?(FUZZY_JACCARD_CONTAINS + ">=" + sim) -> 1.0
+      if (softJacc70 >= sim) fv += alignFeatureIndexer.indexOf_?(SOFT_JACCARD70 + ">=" + sim) -> 1.0
+      if (softJacc85 >= sim) fv += alignFeatureIndexer.indexOf_?(SOFT_JACCARD85 + ">=" + sim) -> 1.0
+      if (softJacc90 >= sim) fv += alignFeatureIndexer.indexOf_?(SOFT_JACCARD90 + ">=" + sim) -> 1.0
+      if (softJacc95 >= sim) fv += alignFeatureIndexer.indexOf_?(SOFT_JACCARD95 + ">=" + sim) -> 1.0
+      if (softJacc70Contains >= sim) fv += alignFeatureIndexer.indexOf_?(SOFT_JACCARD70_CONTAINS + ">=" + sim) -> 1.0
+      if (softJacc85Contains >= sim) fv += alignFeatureIndexer.indexOf_?(SOFT_JACCARD85_CONTAINS + ">=" + sim) -> 1.0
+      if (softJacc90Contains >= sim) fv += alignFeatureIndexer.indexOf_?(SOFT_JACCARD90_CONTAINS + ">=" + sim) -> 1.0
+      if (softJacc95Contains >= sim) fv += alignFeatureIndexer.indexOf_?(SOFT_JACCARD95_CONTAINS + ">=" + sim) -> 1.0
+      if (jacc >= sim) fv += alignFeatureIndexer.indexOf_?(JACCARD + ">=" + sim) -> 1.0
+      if (jaccContains >= sim) fv += alignFeatureIndexer.indexOf_?(JACCARD_CONTAINS + ">=" + sim) -> 1.0
+    }
+    fv
   }
 
   def main(args: Array[String]) {
@@ -190,14 +240,18 @@ object BFTApp extends ABFTAlign with HasLogger {
     logger.info("#records=" + rawRecords.size + " #texts=" + rawTexts.size)
 
     val id2mention = new HashMap[String, Mention]
+    val id2fExample = new HashMap[String, FeatMentionExample]
+    val id2fvecExample = new HashMap[String, FeatVecMentionExample]
     val id2cluster = FileHelper.getMapping1to2(args(0))
     val cluster2ids = getClusterToIds(id2cluster)
     for (m <- rawMentions) {
       id2mention(m.id) = m
+      id2fExample(m.id) = toFeatExample(m)
+      id2fvecExample(m.id) = toFeatVecExample(m)
     }
 
-    val fExamples = rawMentions.map(toFeatExample(_))
-    val fvecExamples = rawMentions.map(toFeatVecExample(_))
+    val fExamples = id2fExample.values.toSeq
+    val fvecExamples = id2fvecExample.values.toSeq
 
     // 1. Calculate candidate pairs using hotelname and localarea
     val blocker = getBlocker(cluster2ids)
@@ -210,58 +264,93 @@ object BFTApp extends ABFTAlign with HasLogger {
     var hmmParams = newSegmentParams(true, true, labelIndexer, wordFeatureIndexer)
     hmmParams.setUniform_!
     hmmParams.normalize_!(1e-2)
-    hmmParams = learnEMSegmentParamsHMM(20, fExamples, hmmParams, 1e-2, 1e-2)
-    decodeSegmentParamsHMM("bft.hmm.true.txt", "bft.hmm.pred.txt", fExamples, hmmParams)
+    hmmParams = learnEMSegmentParamsHMM(1, fExamples, hmmParams, 1e-2, 1e-2)
+    decodeSegmentation("bft.hmm.true.txt", "bft.hmm.pred.txt", rawMentions, (m: Mention) => {
+      val ex = id2fExample(m.id)
+      val inferencer = new HMMSegmentationInferencer(labelIndexer, maxLengths, ex, hmmParams, hmmParams,
+        InferSpec(0, 1, false, false, true, false, true, false, 1, 0))
+      inferencer.bestWidget
+    })
 
     // 4. WWT phase1 segment and learn from high-precision segmentations
-    val approxMatchers = mapIndex(L, (l: Int) => {
-      if (l == otherLabelIndex) new NoopScorer(0).score(_, _)
-      else if (l == hotelNameIndex) new FuzzyJaccardScorer(approxTokenMatcher).score(_, _)
-      else if (l == localAreaIndex) new FuzzyJaccardScorer(approxTokenMatcher).score(_, _)
-      else new SoftJaccardScorer(0.95).score(_, _)
-    })
-    val approxMatchThresholds = mapIndex(L, (l: Int) => {
-      if (l == otherLabelIndex) 0.0
-      else if (l == hotelNameIndex) 0.9
-      else if (l == localAreaIndex) 0.9
-      else 0.99
-    })
+    /*
+        val hplExamples = getHighPrecisionLabeledExamples(fvecExamples, blocker, approxMatchers,
+          approxMatchThresholds, approxMatchThresholds.foldLeft(0.0)(_ + _), id2cluster)
+        var crfParams = newSegmentParams(false, true, labelIndexer, featureIndexer)
+        crfParams.setUniform_!
+        crfParams = learnSupervisedSegmentParamsCRF(50, hplExamples, crfParams, 1, 1)
+        // crfParams.output(logger.info(_))
+        decodeSegmentation("bft.crf.true.txt", "bft.crf.pred.txt", rawMentions, (m: Mention) => {
+          val ex = id2fvecExample(m.id)
+          val inferencer = new CRFSegmentationInferencer(labelIndexer, maxLengths, ex, crfParams, crfParams,
+            InferSpec(0, 1, false, false, true, false, false, true, 1, 0))
+          inferencer.bestWidget
+        })
+    */
 
-    val hplExamples = getHighPrecisionLabeledExamples(fvecExamples, blocker, approxMatchers,
-      approxMatchThresholds, approxMatchThresholds.foldLeft(0.0)(_ + _), id2cluster)
-    var crfParams = newSegmentParams(false, true, labelIndexer, featureIndexer)
-    crfParams.setUniform_!
-    crfParams = learnSupervisedSegmentParamsCRF(50, hplExamples, crfParams, 1, 1)
-    // crfParams.output(logger.info(_))
-    decodeSegmentParamsCRF("bft.crf.true.txt", "bft.crf.pred.txt", fvecExamples.filter(_.isRecord == false), crfParams)
+    val hplAlignParams1 = newAlignParams(false, true, labelIndexer, alignFeatureIndexer)
+    hplAlignParams1.setUniform_!
+    hplAlignParams1.labelAligns(hotelNameIndex).increment_!(
+      alignFeatureIndexer.indexOf_?(FUZZY_JACCARD + ">=0.9"), 1.0)
+    hplAlignParams1.labelAligns(localAreaIndex).increment_!(
+      alignFeatureIndexer.indexOf_?(FUZZY_JACCARD + ">=0.9"), 1.0)
+    hplAlignParams1.labelAligns(starRatingIndex).increment_!(
+      alignFeatureIndexer.indexOf_?(JACCARD + ">=1.0"), 1.0)
+
+    var numMatches = 0
+    var tpMatches = 0
+    var fpMatches = 0
+    var fnMatches = 0
+    var hplMatches = 0
+    for (m1 <- rawTexts) {
+      val clusterOpt1 = id2cluster.get(m1.id)
+      val ex1 = id2fvecExample(m1.id)
+      var numLocalMatches = 0
+      var localTpMatches = 0
+      for (m2 <- rawRecords if blocker.isPair(m1.id, m2.id)) {
+        val cluster2 = id2cluster(m2.id)
+        val ex2 = id2fvecExample(m2.id)
+        val isMatch = clusterOpt1.isDefined && clusterOpt1.get == cluster2
+        val trueMatchIds = new HashSet[String]
+        if (isMatch) {
+          trueMatchIds += ex2.id
+          numMatches += 1
+        }
+        val ex = new FeatVecAlignmentMentionExample(ex1.id, ex1.isRecord, ex1.words,
+          ex1.possibleEnds, ex1.featSeq, trueMatchIds, ex1.trueSegmentation, ex2.id, ex2.words, ex2.trueSegmentation)
+        val inferencer = new CRFMatchOnlySegmentationInferencer(labelIndexer, maxLengths, getAlignFeatureVector,
+          ex, hplAlignParams1, hplAlignParams1, InferSpec(0, 1, false, false, true, false, false, true, 1, 0),
+          false, false)
+        if (inferencer.logVZ >= 3.0) {
+          numLocalMatches += 1
+          if (isMatch) {
+            tpMatches += 1
+            localTpMatches += 1
+          }
+          else fpMatches += 1
+          logger.info("")
+          logger.info("id[" + ex.id + "]")
+          logger.info("matchScore: " + inferencer.logVZ + " clusterMatch: " + isMatch)
+          logger.info("recordWords: " + ex.otherWordsSeq.head.mkString(" "))
+          logger.info("recordSegmentation: " + ex.otherSegmentations.head)
+          logger.info("words: " + ex.words.mkString(" "))
+          logger.info("matchSegmentation: " + inferencer.bestWidget)
+          logger.info("segmentation: " + ex.trueSegmentation)
+        } else if (isMatch) {
+          fnMatches += 1
+        }
+      }
+      if (numLocalMatches == 1 && localTpMatches == 1) {
+        hplMatches += 1
+      }
+    }
+    logger.info("")
+    logger.info("#tpMatches=" + tpMatches + " #fpMatches=" + fpMatches +
+      " #fnMatches=" + fnMatches + " #hplMatches=" + hplMatches + " #matches=" + numMatches)
 
     // 5. Do alignment using gold-standard clusters
-    def alignFeaturizer(l: Int, phrase: Seq[String], otherPhrase: Seq[String]): FtrVec = {
-      val fv = new FtrVec
-      val charJacc2 = new CharJaccardScorer(2).score(phrase, otherPhrase)
-      val charJacc3 = new CharJaccardScorer(3).score(phrase, otherPhrase)
-      val fuzzyJacc = new FuzzyJaccardContainScorer(approxTokenMatcher).score(phrase, otherPhrase)
-      val softJacc70 = new SoftJaccardContainScorer(0.70).score(phrase, otherPhrase)
-      val softJacc85 = new SoftJaccardContainScorer(0.85).score(phrase, otherPhrase)
-      val softJacc90 = new SoftJaccardContainScorer(0.90).score(phrase, otherPhrase)
-      val softJacc95 = new SoftJaccardContainScorer(0.95).score(phrase, otherPhrase)
-      val jaccContain = JaccardContainScorer.score(phrase, otherPhrase)
-      val charJaccContain = new CharJaccardContainScorer(2).score(phrase, otherPhrase)
-      fv += alignFeatureIndexer.indexOf_?(BIAS_MATCH) -> 1.0
-      for (sim <- SIM_BINS) {
-        if (charJacc2 >= sim) fv += alignFeatureIndexer.indexOf_?(CHAR2_JACCARD + ">=" + sim) -> 1.0
-        if (charJacc3 >= sim) fv += alignFeatureIndexer.indexOf_?(CHAR3_JACCARD + ">=" + sim) -> 1.0
-        if (fuzzyJacc >= sim) fv += alignFeatureIndexer.indexOf_?(FUZZY_JACCARD_CONTAINS + ">=" + sim) -> 1.0
-        if (softJacc70 >= sim) fv += alignFeatureIndexer.indexOf_?(SOFT_JACCARD70_CONTAINS + ">=" + sim) -> 1.0
-        if (softJacc85 >= sim) fv += alignFeatureIndexer.indexOf_?(SOFT_JACCARD85_CONTAINS + ">=" + sim) -> 1.0
-        if (softJacc90 >= sim) fv += alignFeatureIndexer.indexOf_?(SOFT_JACCARD90_CONTAINS + ">=" + sim) -> 1.0
-        if (softJacc95 >= sim) fv += alignFeatureIndexer.indexOf_?(SOFT_JACCARD95_CONTAINS + ">=" + sim) -> 1.0
-        if (jaccContain >= sim) fv += alignFeatureIndexer.indexOf_?(JACCARD_CONTAINS + ">=" + sim) -> 1.0
-        if (charJaccContain >= sim) fv += alignFeatureIndexer.indexOf_?(CHAR2_JACCARD_CONTAINS + ">=" + sim) -> 1.0
-      }
-      fv
-    }
 
+    /*
     val alignFvecExamples = new ArrayBuffer[FeatVecAlignmentMentionExample]
     var maxDegree = 0
     for (m1 <- rawMentions) {
@@ -286,5 +375,6 @@ object BFTApp extends ABFTAlign with HasLogger {
     // params = new Params(crfParams.transitions, crfParams.emissions, params.aligns)
     params = learnSupervisedAlignParamsCRF(50, alignFvecExamples, params, alignFeaturizer, 1, 1)
     params.output(logger.info(_))
+    */
   }
 }

@@ -7,6 +7,7 @@ import cc.refectorie.user.kedarb.dynprog.utils.Utils._
 import com.mongodb.casbah.commons.Imports._
 import cc.refectorie.user.kedarb.dynprog.types.FtrVec
 import collection.mutable.{ArrayBuffer, HashMap}
+import cc.refectorie.user.kedarb.dynprog.InferSpec
 
 /**
  * @author kedar
@@ -161,17 +162,19 @@ object RexaApp extends ARexaAlign with HasLogger {
     logger.info("#records=" + rawRecords.size + " #texts=" + rawTexts.size)
 
     val id2mention = new HashMap[String, Mention]
+    val id2fExample = new HashMap[String, FeatMentionExample]
     var numMentions = 0
     val maxMentions = rawMentions.size
     for (m <- rawMentions) {
       id2mention(m.id) = m
+      id2fExample(m.id) = toFeatExample(m)
       numMentions += 1
       if (numMentions % 1000 == 0) logger.info("Processed " + numMentions + "/" + maxMentions)
     }
 
     val id2cluster = FileHelper.getMapping1to2(args(0))
     val cluster2ids = getClusterToIds(id2cluster)
-    val examples = rawMentions.map(toFeatExample(_))
+    val examples = id2fExample.values.toSeq
 
     // 1. calculate candidate pairs using author and title
     val blocker = getBlocker(cluster2ids)
@@ -180,10 +183,15 @@ object RexaApp extends ARexaAlign with HasLogger {
     logger.info("#maxMatched=" + getMaxRecordsMatched(rawTexts, rawRecords, blocker))
 
     // 3. Segment HMM baseline
-    var segparams = newSegmentParams(true, true, labelIndexer, wordFeatureIndexer)
-    segparams.setUniform_!
-    segparams.normalize_!(1e-2)
-    segparams = learnEMSegmentParamsHMM(20, examples, segparams, 1e-2, 1e-2)
-    decodeSegmentParamsHMM("rexa.hmm.true.txt", "rexa.hmm.pred.txt", examples, segparams)
+    var hmmParams = newSegmentParams(true, true, labelIndexer, wordFeatureIndexer)
+    hmmParams.setUniform_!
+    hmmParams.normalize_!(1e-2)
+    hmmParams = learnEMSegmentParamsHMM(20, examples, hmmParams, 1e-2, 1e-2)
+    decodeSegmentation("rexa.hmm.true.txt", "rexa.hmm.pred.txt", rawMentions, (m: Mention) => {
+      val ex = id2fExample(m.id)
+      val inferencer = new HMMSegmentationInferencer(labelIndexer, maxLengths, ex, hmmParams, hmmParams,
+        InferSpec(0, 1, false, false, true, false, true, false, 1, 0))
+      inferencer.bestWidget
+    })
   }
 }
