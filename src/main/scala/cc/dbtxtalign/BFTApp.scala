@@ -2,7 +2,6 @@ package cc.dbtxtalign
 
 import cc.refectorie.user.kedarb.dynprog.utils.Utils._
 import com.mongodb.casbah.Imports._
-import org.riedelcastro.nurupo.HasLogger
 import blocking.{AbstractBlocker, UnionIndexBlocker, InvertedIndexBlocker, PhraseHash}
 import phrasematch._
 import mongo.KB
@@ -101,7 +100,7 @@ trait ABFTAlign extends AbstractAlign {
   }
 }
 
-object BFTMongoLoader extends ABFTAlign with HasLogger {
+object BFTMongoLoader extends ABFTAlign {
   def main(args: Array[String]) {
     recordsColl.dropCollection()
     textsColl.dropCollection()
@@ -111,7 +110,7 @@ object BFTMongoLoader extends ABFTAlign with HasLogger {
   }
 }
 
-object BFTFeatureSequenceLoader extends ABFTAlign with HasLogger {
+object BFTFeatureSequenceLoader extends ABFTAlign {
   def main(args: Array[String]) {
     featuresColl.dropCollection()
     for (dbo <- kb.getColl("records").find() ++ kb.getColl("texts").find(); m = new Mention(dbo)) {
@@ -128,7 +127,7 @@ object BFTFeatureSequenceLoader extends ABFTAlign with HasLogger {
   }
 }
 
-object BFTFeatureVectorSequenceLoader extends ABFTAlign with HasLogger {
+object BFTFeatureVectorSequenceLoader extends ABFTAlign {
   def main(args: Array[String]) {
     featureVectorsColl.dropCollection()
     val word2path = FileHelper.getMapping2to1(args(0))
@@ -153,7 +152,7 @@ object BFTFeatureVectorSequenceLoader extends ABFTAlign with HasLogger {
   }
 }
 
-object BFTApp extends ABFTAlign with HasLogger {
+object BFTApp extends ABFTAlign {
   val hotelNameIndex = labelIndexer.indexOf_!("hotelname")
   val localAreaIndex = labelIndexer.indexOf_!("localarea")
   val starRatingIndex = labelIndexer.indexOf_!("starrating")
@@ -178,28 +177,28 @@ object BFTApp extends ABFTAlign with HasLogger {
 
   alignFeatureIndexer += BIAS_MATCH
   for (s <- SIM_BINS) {
-    alignFeatureIndexer += (CHAR2_JACCARD + ">=" + s)
-    alignFeatureIndexer += (CHAR2_JACCARD_CONTAINS + ">=" + s)
-    alignFeatureIndexer += (CHAR3_JACCARD + ">=" + s)
-    alignFeatureIndexer += (FUZZY_JACCARD_CONTAINS + ">=" + s)
-    alignFeatureIndexer += (FUZZY_JACCARD + ">=" + s)
-    alignFeatureIndexer += (SOFT_JACCARD70 + ">=" + s)
-    alignFeatureIndexer += (SOFT_JACCARD85 + ">=" + s)
-    alignFeatureIndexer += (SOFT_JACCARD90 + ">=" + s)
-    alignFeatureIndexer += (SOFT_JACCARD95 + ">=" + s)
-    alignFeatureIndexer += (SOFT_JACCARD70_CONTAINS + ">=" + s)
-    alignFeatureIndexer += (SOFT_JACCARD85_CONTAINS + ">=" + s)
-    alignFeatureIndexer += (SOFT_JACCARD90_CONTAINS + ">=" + s)
-    alignFeatureIndexer += (SOFT_JACCARD95_CONTAINS + ">=" + s)
-    alignFeatureIndexer += (JACCARD + ">=" + s)
-    alignFeatureIndexer += (JACCARD_CONTAINS + ">=" + s)
+    addThresholdFeaturesToIndexer(alignFeatureIndexer, CHAR2_JACCARD, s)
+    addThresholdFeaturesToIndexer(alignFeatureIndexer, CHAR2_JACCARD_CONTAINS, s)
+    addThresholdFeaturesToIndexer(alignFeatureIndexer, CHAR3_JACCARD, s)
+    addThresholdFeaturesToIndexer(alignFeatureIndexer, FUZZY_JACCARD, s)
+    addThresholdFeaturesToIndexer(alignFeatureIndexer, FUZZY_JACCARD_CONTAINS, s)
+    addThresholdFeaturesToIndexer(alignFeatureIndexer, SOFT_JACCARD70, s)
+    addThresholdFeaturesToIndexer(alignFeatureIndexer, SOFT_JACCARD85, s)
+    addThresholdFeaturesToIndexer(alignFeatureIndexer, SOFT_JACCARD90, s)
+    addThresholdFeaturesToIndexer(alignFeatureIndexer, SOFT_JACCARD95, s)
+    addThresholdFeaturesToIndexer(alignFeatureIndexer, SOFT_JACCARD70_CONTAINS, s)
+    addThresholdFeaturesToIndexer(alignFeatureIndexer, SOFT_JACCARD85_CONTAINS, s)
+    addThresholdFeaturesToIndexer(alignFeatureIndexer, SOFT_JACCARD90_CONTAINS, s)
+    addThresholdFeaturesToIndexer(alignFeatureIndexer, SOFT_JACCARD95_CONTAINS, s)
+    addThresholdFeaturesToIndexer(alignFeatureIndexer, JACCARD, s)
+    addThresholdFeaturesToIndexer(alignFeatureIndexer, JACCARD_CONTAINS, s)
   }
 
   override def getAlignFeatureVector(l: Int, phrase: Seq[String], otherPhrase: Seq[String]): FtrVec = {
     val fv = new FtrVec
-    val charJacc2 = new CharJaccardScorer(2).score(phrase, otherPhrase)
-    val charJaccContains = new CharJaccardContainScorer(2).score(phrase, otherPhrase)
-    val charJacc3 = new CharJaccardScorer(3).score(phrase, otherPhrase)
+    val char2Jacc = new CharJaccardScorer(2).score(phrase, otherPhrase)
+    val char2JaccContains = new CharJaccardContainScorer(2).score(phrase, otherPhrase)
+    val char3Jacc = new CharJaccardScorer(3).score(phrase, otherPhrase)
     val fuzzyJacc = new FuzzyJaccardScorer(approxTokenMatcher).score(phrase, otherPhrase)
     val fuzzyJaccContains = new FuzzyJaccardContainScorer(approxTokenMatcher).score(phrase, otherPhrase)
     val softJacc70 = new SoftJaccardScorer(0.70).score(phrase, otherPhrase)
@@ -214,21 +213,21 @@ object BFTApp extends ABFTAlign with HasLogger {
     val jaccContains = JaccardContainScorer.score(phrase, otherPhrase)
     fv += alignFeatureIndexer.indexOf_?(BIAS_MATCH) -> 1.0
     for (sim <- SIM_BINS) {
-      if (charJacc2 >= sim) fv += alignFeatureIndexer.indexOf_?(CHAR2_JACCARD + ">=" + sim) -> 1.0
-      if (charJaccContains >= sim) fv += alignFeatureIndexer.indexOf_?(CHAR2_JACCARD_CONTAINS + ">=" + sim) -> 1.0
-      if (charJacc3 >= sim) fv += alignFeatureIndexer.indexOf_?(CHAR3_JACCARD + ">=" + sim) -> 1.0
-      if (fuzzyJacc >= sim) fv += alignFeatureIndexer.indexOf_?(FUZZY_JACCARD + ">=" + sim) -> 1.0
-      if (fuzzyJaccContains >= sim) fv += alignFeatureIndexer.indexOf_?(FUZZY_JACCARD_CONTAINS + ">=" + sim) -> 1.0
-      if (softJacc70 >= sim) fv += alignFeatureIndexer.indexOf_?(SOFT_JACCARD70 + ">=" + sim) -> 1.0
-      if (softJacc85 >= sim) fv += alignFeatureIndexer.indexOf_?(SOFT_JACCARD85 + ">=" + sim) -> 1.0
-      if (softJacc90 >= sim) fv += alignFeatureIndexer.indexOf_?(SOFT_JACCARD90 + ">=" + sim) -> 1.0
-      if (softJacc95 >= sim) fv += alignFeatureIndexer.indexOf_?(SOFT_JACCARD95 + ">=" + sim) -> 1.0
-      if (softJacc70Contains >= sim) fv += alignFeatureIndexer.indexOf_?(SOFT_JACCARD70_CONTAINS + ">=" + sim) -> 1.0
-      if (softJacc85Contains >= sim) fv += alignFeatureIndexer.indexOf_?(SOFT_JACCARD85_CONTAINS + ">=" + sim) -> 1.0
-      if (softJacc90Contains >= sim) fv += alignFeatureIndexer.indexOf_?(SOFT_JACCARD90_CONTAINS + ">=" + sim) -> 1.0
-      if (softJacc95Contains >= sim) fv += alignFeatureIndexer.indexOf_?(SOFT_JACCARD95_CONTAINS + ">=" + sim) -> 1.0
-      if (jacc >= sim) fv += alignFeatureIndexer.indexOf_?(JACCARD + ">=" + sim) -> 1.0
-      if (jaccContains >= sim) fv += alignFeatureIndexer.indexOf_?(JACCARD_CONTAINS + ">=" + sim) -> 1.0
+      addFeatureToVector_?(fv, alignFeatureIndexer, char2Jacc, sim, CHAR2_JACCARD)
+      addFeatureToVector_?(fv, alignFeatureIndexer, char2JaccContains, sim, CHAR2_JACCARD_CONTAINS)
+      addFeatureToVector_?(fv, alignFeatureIndexer, char3Jacc, sim, CHAR3_JACCARD)
+      addFeatureToVector_?(fv, alignFeatureIndexer, fuzzyJacc, sim, FUZZY_JACCARD)
+      addFeatureToVector_?(fv, alignFeatureIndexer, fuzzyJaccContains, sim, FUZZY_JACCARD_CONTAINS)
+      addFeatureToVector_?(fv, alignFeatureIndexer, softJacc70, sim, SOFT_JACCARD70)
+      addFeatureToVector_?(fv, alignFeatureIndexer, softJacc85, sim, SOFT_JACCARD85)
+      addFeatureToVector_?(fv, alignFeatureIndexer, softJacc90, sim, SOFT_JACCARD90)
+      addFeatureToVector_?(fv, alignFeatureIndexer, softJacc95, sim, SOFT_JACCARD95)
+      addFeatureToVector_?(fv, alignFeatureIndexer, softJacc70Contains, sim, SOFT_JACCARD70_CONTAINS)
+      addFeatureToVector_?(fv, alignFeatureIndexer, softJacc85Contains, sim, SOFT_JACCARD85_CONTAINS)
+      addFeatureToVector_?(fv, alignFeatureIndexer, softJacc90Contains, sim, SOFT_JACCARD90_CONTAINS)
+      addFeatureToVector_?(fv, alignFeatureIndexer, softJacc95Contains, sim, SOFT_JACCARD95_CONTAINS)
+      addFeatureToVector_?(fv, alignFeatureIndexer, jacc, sim, JACCARD)
+      addFeatureToVector_?(fv, alignFeatureIndexer, jaccContains, sim, JACCARD_CONTAINS)
     }
     fv
   }
@@ -290,12 +289,9 @@ object BFTApp extends ABFTAlign with HasLogger {
 
     val hplAlignParams1 = newAlignParams(false, true, labelIndexer, alignFeatureIndexer)
     hplAlignParams1.setUniform_!
-    hplAlignParams1.labelAligns(hotelNameIndex).increment_!(
-      alignFeatureIndexer.indexOf_?(FUZZY_JACCARD + ">=0.9"), 1.0)
-    hplAlignParams1.labelAligns(localAreaIndex).increment_!(
-      alignFeatureIndexer.indexOf_?(FUZZY_JACCARD + ">=0.9"), 1.0)
-    hplAlignParams1.labelAligns(starRatingIndex).increment_!(
-      alignFeatureIndexer.indexOf_?(JACCARD + ">=1.0"), 1.0)
+    hplAlignParams1.labelAligns(hotelNameIndex).increment_!(alignFeatureIndexer.indexOf_?(_gte(FUZZY_JACCARD, 0.6)), 1.0)
+    hplAlignParams1.labelAligns(localAreaIndex).increment_!(alignFeatureIndexer.indexOf_?(_gte(FUZZY_JACCARD, 0.6)), 1.0)
+    hplAlignParams1.labelAligns(starRatingIndex).increment_!(alignFeatureIndexer.indexOf_?(_gte(JACCARD, 1.0)), 1.0)
 
     var numMatches = 0
     var tpMatches = 0

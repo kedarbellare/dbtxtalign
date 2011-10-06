@@ -13,13 +13,14 @@ import optimization.gradientBasedMethods.stats.OptimizerStats
 import optimization.gradientBasedMethods.{Objective, Optimizer, LBFGS}
 import params._
 import optimization.stopCriteria.{AverageValueDifference, GradientL2Norm}
+import org.riedelcastro.nurupo.HasLogger
 
 /**
  * @author kedar
  */
 
 
-trait AbstractAlign {
+trait AbstractAlign extends HasLogger {
   val wordIndexer = new Indexer[String]
   val labelIndexer = new Indexer[String]
   val wordFeatureIndexer = new Indexer[String]
@@ -27,8 +28,6 @@ trait AbstractAlign {
   val alignFeatureIndexer = new Indexer[String]
   val maxLengths = new ArrayBuffer[Int]
   val otherLabelIndex = labelIndexer.indexOf_!("O")
-
-  def logger: Logger
 
   def simplify(s: String): String
 
@@ -41,6 +40,26 @@ trait AbstractAlign {
   def F = featureIndexer.size
 
   def AF = alignFeatureIndexer.size
+
+  def _gte(simStr: String, threshold: Double) = simStr + ">=" + threshold
+
+  def _lt(simStr: String, threshold: Double) = simStr + "<" + threshold
+
+  def addThresholdFeaturesToIndexer(indexer: Indexer[String], simStr: String, threshold: Double) {
+    indexer += _gte(simStr, threshold)
+    indexer += _lt(simStr, threshold)
+  }
+
+  def addFeatureToVector_?(fv: FtrVec, indexer: Indexer[String], score: Double, threshold: Double,
+                           simStr: String) = {
+    if (score >= threshold) {
+      val trueIdx = indexer.indexOf_?(_gte(simStr, threshold))
+      if (trueIdx >= 0) fv += trueIdx -> 1.0
+    } else {
+      val falseIdx = indexer.indexOf_?(_lt(simStr, threshold))
+      if (falseIdx >= 0) fv += falseIdx -> 1.0
+    }
+  }
 
   def adjustSegmentation(words: Seq[String], segmentation: Segmentation): Segmentation = {
     val adjSegmentation = new Segmentation(segmentation.length)

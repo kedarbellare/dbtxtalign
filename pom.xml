@@ -99,7 +99,7 @@
         </dependency>
         <dependency>
             <groupId>org.riedelcastro.nurupo</groupId>
-            <artifactId>nurupo</artifactId>
+            <artifactId>nurupo_${scala.version}</artifactId>
             <version>0.1-SNAPSHOT</version>
         </dependency>
     </dependencies>

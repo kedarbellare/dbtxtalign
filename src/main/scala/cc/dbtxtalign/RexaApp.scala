@@ -1,6 +1,5 @@
 package cc.dbtxtalign
 
-import org.riedelcastro.nurupo.HasLogger
 import blocking.{AbstractBlocker, PhraseHash, InvertedIndexBlocker, UnionIndexBlocker}
 import mongo.KB
 import cc.refectorie.user.kedarb.dynprog.utils.Utils._
@@ -105,7 +104,7 @@ trait ARexaAlign extends AbstractAlign {
   }
 }
 
-object RexaMongoLoader extends ARexaAlign with HasLogger {
+object RexaMongoLoader extends ARexaAlign {
   def main(args: Array[String]) {
     recordsColl.drop()
     textsColl.drop()
@@ -115,7 +114,7 @@ object RexaMongoLoader extends ARexaAlign with HasLogger {
   }
 }
 
-object RexaFeatureSequenceLoader extends ARexaAlign with HasLogger {
+object RexaFeatureSequenceLoader extends ARexaAlign {
   def main(args: Array[String]) {
     featuresColl.dropCollection()
     for (dbo <- recordsColl.find() ++ textsColl.find(); m = new Mention(dbo)) {
@@ -132,7 +131,7 @@ object RexaFeatureSequenceLoader extends ARexaAlign with HasLogger {
   }
 }
 
-object RexaFeatureVectorSequenceLoader extends ARexaAlign with HasLogger {
+object RexaFeatureVectorSequenceLoader extends ARexaAlign {
   def main(args: Array[String]) {
     featureVectorsColl.dropCollection()
     for (dbo <- recordsColl.find() ++ textsColl.find(); m = new Mention(dbo)) {
@@ -154,7 +153,7 @@ object RexaFeatureVectorSequenceLoader extends ARexaAlign with HasLogger {
   }
 }
 
-object RexaApp extends ARexaAlign with HasLogger {
+object RexaApp extends ARexaAlign {
   def main(args: Array[String]) {
     val rawRecords = recordsColl.map(new Mention(_)).toArray
     val rawTexts = textsColl.map(new Mention(_)).toArray
