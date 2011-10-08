@@ -310,8 +310,8 @@ trait AbstractAlign extends HasLogger {
       val counts = newSegmentParams(true, true, labelIndexer, wordFeatureIndexer)
       var loglike = 0.0
       workers.foreach(worker => {
-        // get work from each worker
-        for (result <- (worker ? FinishedMentions).as[SegmentResult]) {
+        for (result <- (worker !! FinishedMentions).as[SegmentResult]) {
+          // get work from each worker
           loglike += result.stats.logZ
           counts.add_!(result.counts, 1)
         }
@@ -390,8 +390,8 @@ trait AbstractAlign extends HasLogger {
 
     val constraints = newSegmentParams(false, true, labelIndexer, featureIndexer)
     constraintWorkers.foreach(worker => {
-      // get work from each worker
-      for (result <- (worker ? FinishedMentions).as[SegmentResult]) {
+      for (result <- (worker !! FinishedMentions).as[SegmentResult]) {
+        // get work from each worker
         constraints.add_!(result.counts, 1)
       }
 
@@ -411,8 +411,8 @@ trait AbstractAlign extends HasLogger {
         val expectations = newSegmentParams(false, true, labelIndexer, featureIndexer)
         val stats = new ProbStats()
         workers.foreach(worker => {
-          // get work from each worker
-          for (result <- (worker ? FinishedMentions).as[SegmentResult]) {
+          for (result <- (worker !! FinishedMentions).as[SegmentResult]) {
+            // get work from each worker
             stats += result.stats
             expectations.add_!(result.counts, 1)
           }
@@ -511,7 +511,7 @@ trait AbstractAlign extends HasLogger {
     var fn = 0
     workers.foreach(worker => {
       // get work from each worker
-      for (result <- (worker ? FinishedMentions).as[AlignPerfResult]) {
+      for (result <- (worker !! FinishedMentions).as[AlignPerfResult]) {
         total += result.total
         tp += result.tp
         fp += result.fp
