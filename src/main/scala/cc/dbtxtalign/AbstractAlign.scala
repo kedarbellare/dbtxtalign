@@ -311,10 +311,10 @@ trait AbstractAlign extends HasLogger {
       var loglike = 0.0
       workers.foreach(worker => {
         // get work from each worker
-        val result = (worker ? FinishedMentions).as[SegmentResult]
-          .getOrElse(throw fail("Couldn't get hmm segmentation result from worker; iteration=" + iter))
-        loglike += result.stats.logZ
-        counts.add_!(result.counts, 1)
+        for (result <- (worker ? FinishedMentions).as[SegmentResult]) {
+          loglike += result.stats.logZ
+          counts.add_!(result.counts, 1)
+        }
 
         // stop worker
         worker.stop()
@@ -391,9 +391,9 @@ trait AbstractAlign extends HasLogger {
     val constraints = newSegmentParams(false, true, labelIndexer, featureIndexer)
     constraintWorkers.foreach(worker => {
       // get work from each worker
-      val result = (worker ? FinishedMentions).as[SegmentResult]
-        .getOrElse(throw fail("Couldn't get crf segmentation constraints result from worker; iteration=0"))
-      constraints.add_!(result.counts, 1)
+      for (result <- (worker ? FinishedMentions).as[SegmentResult]) {
+        constraints.add_!(result.counts, 1)
+      }
 
       // stop worker
       worker.stop()
@@ -412,10 +412,10 @@ trait AbstractAlign extends HasLogger {
         val stats = new ProbStats()
         workers.foreach(worker => {
           // get work from each worker
-          val result = (worker ? FinishedMentions).as[SegmentResult]
-            .getOrElse(throw fail("Couldn't get crf segmentation expectations result from worker; iteration=0"))
-          stats += result.stats
-          expectations.add_!(result.counts, 1)
+          for (result <- (worker ? FinishedMentions).as[SegmentResult]) {
+            stats += result.stats
+            expectations.add_!(result.counts, 1)
+          }
 
           // stop worker
           worker.stop()
@@ -511,11 +511,12 @@ trait AbstractAlign extends HasLogger {
     var fn = 0
     workers.foreach(worker => {
       // get work from each worker
-      val result = (worker ? FinishedMentions).as[AlignPerfResult].getOrElse(throw fail("Couldn't get result from worker"))
-      total += result.total
-      tp += result.tp
-      fp += result.fp
-      fn += result.fn
+      for (result <- (worker ? FinishedMentions).as[AlignPerfResult]) {
+        total += result.total
+        tp += result.tp
+        fp += result.fp
+        fn += result.fn
+      }
 
       // stop worker
       worker.stop()
