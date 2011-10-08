@@ -31,14 +31,14 @@ trait AMatchOnlySegmentationInferencer[Feature, Example <: AFeatAlignmentMention
   def updateSingleEmissionCached(a: Int, k: Int, x: Double) {}
 
   // (label, phrase, otherPhrase) => alignFeatureVector
-  def alignFeaturizer: (Int, Seq[String], Seq[String]) => FtrVec
+  def alignFeaturizer: (Int, String, Int, Int, String, Int, Int) => FtrVec
 
   def scoreSimilarity(otherIndex: Int, a: Int, i: Int, j: Int, oi: Int, oj: Int) = {
     //    val key = SegmentAlignment(otherIds(otherIndex), a, i, j, oi, oj)
     //    if (!ex.cachedAlignFeatures.contains(key))
     //      ex.cachedAlignFeatures(key) = alignFeaturizer(a, words.slice(i, j), otherWordsSeq(otherIndex).slice(oi, oj))
     //    score(alignParams(a), ex.cachedAlignFeatures(key))
-    score(alignParams(a), alignFeaturizer(a, words.slice(i, j), otherWordsSeq(otherIndex).slice(oi, oj)))
+    score(alignParams(a), alignFeaturizer(a, ex.id, i, j, otherIds(otherIndex), oi, oj))
   }
 
   def updateSimilarity(otherIndex: Int, a: Int, i: Int, j: Int, oi: Int, oj: Int, v: Double) {
@@ -46,19 +46,19 @@ trait AMatchOnlySegmentationInferencer[Feature, Example <: AFeatAlignmentMention
     //    if (!ex.cachedAlignFeatures.contains(key))
     //      ex.cachedAlignFeatures(key) = alignFeaturizer(a, words.slice(i, j), otherWordsSeq(otherIndex).slice(oi, oj))
     //    update(alignCounts(a), ex.cachedAlignFeatures(key), v)
-    update(alignCounts(a), alignFeaturizer(a, words.slice(i, j), otherWordsSeq(otherIndex).slice(oi, oj)), v)
+    update(alignCounts(a), alignFeaturizer(a, ex.id, i, j, otherIds(otherIndex), oi, oj), v)
   }
 }
 
 class HMMMatchOnlySegmentationInferencer(val labelIndexer: Indexer[String], val maxLengths: Seq[Int],
-                                         val alignFeaturizer: (Int, Seq[String], Seq[String]) => FtrVec,
+                                         val alignFeaturizer: (Int, String, Int, Int, String, Int, Int) => FtrVec,
                                          val ex: FeatAlignmentMentionExample, val params: AlignParams,
                                          val counts: AlignParams, val ispec: InferSpec,
                                          val trueMatchInfer: Boolean, val trueSegmentInfer: Boolean)
   extends AMatchOnlySegmentationInferencer[Int, FeatAlignmentMentionExample]
 
 class CRFMatchOnlySegmentationInferencer(val labelIndexer: Indexer[String], val maxLengths: Seq[Int],
-                                         val alignFeaturizer: (Int, Seq[String], Seq[String]) => FtrVec,
+                                         val alignFeaturizer: (Int, String, Int, Int, String, Int, Int) => FtrVec,
                                          val ex: FeatVecAlignmentMentionExample, val params: AlignParams,
                                          val counts: AlignParams, val ispec: InferSpec,
                                          val trueMatchInfer: Boolean, val trueSegmentInfer: Boolean)

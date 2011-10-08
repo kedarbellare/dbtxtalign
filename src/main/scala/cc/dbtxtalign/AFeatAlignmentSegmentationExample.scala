@@ -12,16 +12,12 @@ class MatchSegmentation(val matchIds: HashSet[String], val segmentation: Segment
   override def toString = segmentation.toString() + " matches[" + matchIds.mkString(", ") + "]"
 }
 
-case class SegmentAlignment(otherId: String, a: Int, i: Int, j: Int, oi: Int, oj: Int)
-
 trait AFeatAlignmentSegmentationExample[Feature, Widget] extends AFeatSegmentationExample[Feature, Widget] {
   def otherIds: Seq[String]
 
   def otherWordsSeq: Seq[Seq[String]]
 
   def otherSegmentations: Seq[Segmentation]
-
-  val cachedAlignFeatures = new HashMap[SegmentAlignment, FtrVec]
 }
 
 trait AFeatAlignmentMentionExample[Feature] extends AFeatAlignmentSegmentationExample[Feature, MatchSegmentation]

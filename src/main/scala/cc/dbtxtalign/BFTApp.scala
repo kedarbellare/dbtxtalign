@@ -3,6 +3,7 @@ package cc.dbtxtalign
 import cc.refectorie.user.kedarb.dynprog.utils.Utils._
 import com.mongodb.casbah.Imports._
 import blocking.{AbstractBlocker, UnionIndexBlocker, InvertedIndexBlocker, PhraseHash}
+import fastsim._
 import phrasematch._
 import mongo.KB
 import cc.refectorie.user.kedarb.dynprog.types.FtrVec
@@ -13,7 +14,7 @@ import collection.mutable.{HashSet, ArrayBuffer, HashMap}
  * @author kedar
  */
 
-object BFTKB extends KB("bft",
+object BFTKB extends KB("bft-scratch",
   DBAlignConfig.get[String]("mongoHostname", "localhost"),
   DBAlignConfig.get[Int]("mongoPort", 27017))
 
@@ -94,10 +95,6 @@ trait ABFTAlign extends AbstractAlign {
 
     unionIndex1
   }
-
-  def approxTokenMatcher(t1: String, t2: String): Boolean = {
-    ObjectStringScorer.getThresholdLevenshtein(t1, t2, 2) <= 1 || ObjectStringScorer.getJaroWinklerScore(t1, t2) >= 0.95
-  }
 }
 
 object BFTMongoLoader extends ABFTAlign {
@@ -157,6 +154,10 @@ object BFTApp extends ABFTAlign {
   val localAreaIndex = labelIndexer.indexOf_!("localarea")
   val starRatingIndex = labelIndexer.indexOf_!("starrating")
 
+  val tokenSimilarityIndex = new SimilarityIndex(s => ObjectStringScorer.getTokens(Seq(s)))
+  val bigramSimilarityIndex = new SimilarityIndex(s => ObjectStringScorer.getNgramTokens(Seq(s), 2))
+  val trigramSimilarityIndex = new SimilarityIndex(s => ObjectStringScorer.getNgramTokens(Seq(s), 3))
+
   val BIAS_MATCH = "bias_match"
   val CHAR2_JACCARD = "char_jaccard[n=2]"
   val CHAR2_JACCARD_CONTAINS = "char_jaccard_contains[n=2]"
@@ -194,23 +195,34 @@ object BFTApp extends ABFTAlign {
     addThresholdFeaturesToIndexer(alignFeatureIndexer, JACCARD_CONTAINS, s)
   }
 
-  override def getAlignFeatureVector(l: Int, phrase: Seq[String], otherPhrase: Seq[String]): FtrVec = {
+  def approxTokenMatcher(t1: String, t2: String): Double = {
+    if (ObjectStringScorer.getThresholdLevenshtein(t1, t2, 2) <= 1 ||
+      ObjectStringScorer.getJaroWinklerScore(t1, t2) >= 0.95) 1
+    else 0
+  }
+
+  def approxJaroWinklerScorer(t1: String, t2: String, threshold: Double = 0.95): Double = {
+    val score = ObjectStringScorer.getJaroWinklerScore(t1, t2)
+    if (score >= threshold) score else 0
+  }
+
+  override def getAlignFeatureVector(l: Int, id1: String, i1: Int, j1: Int, id2: String, i2: Int, j2: Int): FtrVec = {
     val fv = new FtrVec
-    val char2Jacc = new CharJaccardScorer(2).score(phrase, otherPhrase)
-    val char2JaccContains = new CharJaccardContainScorer(2).score(phrase, otherPhrase)
-    val char3Jacc = new CharJaccardScorer(3).score(phrase, otherPhrase)
-    val fuzzyJacc = new FuzzyJaccardScorer(approxTokenMatcher).score(phrase, otherPhrase)
-    val fuzzyJaccContains = new FuzzyJaccardContainScorer(approxTokenMatcher).score(phrase, otherPhrase)
-    val softJacc70 = new SoftJaccardScorer(0.70).score(phrase, otherPhrase)
-    val softJacc85 = new SoftJaccardScorer(0.85).score(phrase, otherPhrase)
-    val softJacc90 = new SoftJaccardScorer(0.90).score(phrase, otherPhrase)
-    val softJacc95 = new SoftJaccardScorer(0.95).score(phrase, otherPhrase)
-    val softJacc70Contains = new SoftJaccardContainScorer(0.70).score(phrase, otherPhrase)
-    val softJacc85Contains = new SoftJaccardContainScorer(0.85).score(phrase, otherPhrase)
-    val softJacc90Contains = new SoftJaccardContainScorer(0.90).score(phrase, otherPhrase)
-    val softJacc95Contains = new SoftJaccardContainScorer(0.95).score(phrase, otherPhrase)
-    val jacc = JaccardScorer.score(phrase, otherPhrase)
-    val jaccContains = JaccardContainScorer.score(phrase, otherPhrase)
+    val char2Jacc = bigramSimilarityIndex.jaccardScore(id1, i1, j1, id2, i2, j2)
+    val char2JaccContains = bigramSimilarityIndex.containsJaccardScore(id1, i1, j1, id2, i2, j2)
+    val char3Jacc = trigramSimilarityIndex.jaccardScore(id1, i1, j1, id2, i2, j2)
+    val fuzzyJacc = tokenSimilarityIndex.approxJaccardScorer(id1, i1, j1, id2, i2, j2, approxTokenMatcher(_, _))
+    val fuzzyJaccContains = tokenSimilarityIndex.approxJaccardContainScorer(id1, i1, j1, id2, i2, j2, approxTokenMatcher(_, _))
+    val softJacc70 = tokenSimilarityIndex.approxJaccardScorer(id1, i1, j1, id2, i2, j2, approxJaroWinklerScorer(_, _, 0.70))
+    val softJacc85 = tokenSimilarityIndex.approxJaccardScorer(id1, i1, j1, id2, i2, j2, approxJaroWinklerScorer(_, _, 0.85))
+    val softJacc90 = tokenSimilarityIndex.approxJaccardScorer(id1, i1, j1, id2, i2, j2, approxJaroWinklerScorer(_, _, 0.90))
+    val softJacc95 = tokenSimilarityIndex.approxJaccardScorer(id1, i1, j1, id2, i2, j2, approxJaroWinklerScorer(_, _, 0.95))
+    val softJacc70Contains = tokenSimilarityIndex.approxJaccardContainScorer(id1, i1, j1, id2, i2, j2, approxJaroWinklerScorer(_, _, 0.70))
+    val softJacc85Contains = tokenSimilarityIndex.approxJaccardContainScorer(id1, i1, j1, id2, i2, j2, approxJaroWinklerScorer(_, _, 0.85))
+    val softJacc90Contains = tokenSimilarityIndex.approxJaccardContainScorer(id1, i1, j1, id2, i2, j2, approxJaroWinklerScorer(_, _, 0.90))
+    val softJacc95Contains = tokenSimilarityIndex.approxJaccardContainScorer(id1, i1, j1, id2, i2, j2, approxJaroWinklerScorer(_, _, 0.95))
+    val jacc = tokenSimilarityIndex.jaccardScore(id1, i1, j1, id2, i2, j2)
+    val jaccContains = tokenSimilarityIndex.containsJaccardScore(id1, i1, j1, id2, i2, j2)
     fv += alignFeatureIndexer.indexOf_?(BIAS_MATCH) -> 1.0
     for (sim <- SIM_BINS) {
       addFeatureToVector_?(fv, alignFeatureIndexer, char2Jacc, sim, CHAR2_JACCARD)
@@ -247,6 +259,7 @@ object BFTApp extends ABFTAlign {
       id2mention(m.id) = m
       id2fExample(m.id) = toFeatExample(m)
       id2fvecExample(m.id) = toFeatVecExample(m)
+      tokenSimilarityIndex.index(m.id, m.words)
     }
 
     val fExamples = id2fExample.values.toSeq
@@ -289,8 +302,8 @@ object BFTApp extends ABFTAlign {
 
     val hplAlignParams1 = newAlignParams(false, true, labelIndexer, alignFeatureIndexer)
     hplAlignParams1.setUniform_!
-    hplAlignParams1.labelAligns(hotelNameIndex).increment_!(alignFeatureIndexer.indexOf_?(_gte(FUZZY_JACCARD, 0.6)), 1.0)
-    hplAlignParams1.labelAligns(localAreaIndex).increment_!(alignFeatureIndexer.indexOf_?(_gte(FUZZY_JACCARD, 0.6)), 1.0)
+    hplAlignParams1.labelAligns(hotelNameIndex).increment_!(alignFeatureIndexer.indexOf_?(_gte(FUZZY_JACCARD, 0.9)), 1.0)
+    hplAlignParams1.labelAligns(localAreaIndex).increment_!(alignFeatureIndexer.indexOf_?(_gte(FUZZY_JACCARD, 0.9)), 1.0)
     hplAlignParams1.labelAligns(starRatingIndex).increment_!(alignFeatureIndexer.indexOf_?(_gte(JACCARD, 1.0)), 1.0)
 
     var numMatches = 0

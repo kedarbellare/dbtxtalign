@@ -45,8 +45,23 @@ trait AStringScorer {
     val buff = new ArrayBuffer[String]
     phrase.foreach(w => {
       val w1 = if (ignoreCase) w.toLowerCase() else w
-      val w2 = w1.replaceAll("^[^A-Za-z0-9]+", "").replaceAll("[^A-Za-z0-9]+$", "")
+      val w2 = if (ignorePunctuation) w1.replaceAll("^[^A-Za-z0-9]+", "").replaceAll("[^A-Za-z0-9]+$", "") else w1
       if (w2.length() > 0) buff += w1
+    })
+    buff.toSeq
+  }
+
+  def getNgramTokens(phrase: Seq[String], n: Int, ignoreCase: Boolean = true, ignorePunctuation: Boolean = true): Seq[String] = {
+    val buff = new ArrayBuffer[String]
+    phrase.foreach(w => {
+      val w1 = if (ignoreCase) w.toLowerCase() else w
+      val w2 = if (ignorePunctuation) w1.replaceAll("^[^A-Za-z0-9]+", "").replaceAll("[^A-Za-z0-9]+$", "") else w1
+      if (w2.length() > 0) {
+        val w3 = "^" + w1 + "$"
+        for (i <- 0 until w3.length() - n) {
+          buff += w3.slice(i, i + n).intern()
+        }
+      }
     })
     buff.toSeq
   }

@@ -134,7 +134,7 @@ trait AbstractAlign extends HasLogger {
     })
   }
 
-  def getAlignFeatureVector(l: Int, phrase: Seq[String], otherPhrase: Seq[String]): FtrVec = new FtrVec
+  def getAlignFeatureVector(l: Int, id1: String, i1: Int, j1: Int, id2: String, i2: Int, j2: Int): FtrVec = new FtrVec
 
   def getSegmentation_!(m: Mention, indexer: Indexer[String]): Segmentation = {
     Segmentation.fromBIO(m.trueBioLabels, indexer.indexOf_!(_))
@@ -204,7 +204,7 @@ trait AbstractAlign extends HasLogger {
   }
 
   def newAlignParams(isProb: Boolean, isDense: Boolean,
-                      labelIndexer: Indexer[String], alignFeatureIndexer: Indexer[String]): AlignParams = {
+                     labelIndexer: Indexer[String], alignFeatureIndexer: Indexer[String]): AlignParams = {
     import ParamUtils._
     val L = labelIndexer.size
     val AF = alignFeatureIndexer.size
@@ -255,7 +255,7 @@ trait AbstractAlign extends HasLogger {
   }
 
   def decodeSegmentation(trueFilename: String, predFilename: String, mentions: Seq[Mention],
-                          decoder: (Mention) => Segmentation) {
+                         decoder: (Mention) => Segmentation) {
     val trueOut = new PrintWriter(trueFilename)
     val predOut = new PrintWriter(predFilename)
     val segmentPerf = new SegmentSegmentationEvaluator("textSegEval", labelIndexer)
@@ -327,7 +327,8 @@ trait AbstractAlign extends HasLogger {
 
     params
   }
-/*
+
+  /*
   def getHighPrecisionLabeledExamples(fvecExamples: Seq[FeatVecMentionExample],
                                       blocker: AbstractBlocker,
                                       approxMatchers: Seq[(Seq[String], Seq[String]) => Double],
