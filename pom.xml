@@ -20,8 +20,13 @@
         </repository>
         <repository>
             <id>iesl.cs.umass.edu</id>
-            <name>IESL repository</name>
+            <name>IESL Repository</name>
             <url>http://iesl.cs.umass.edu:8081/nexus/content/repositories/thirdparty/</url>
+        </repository>
+        <repository>
+            <id>iesl-snapshots</id>
+            <name>IESL Snapshots Repository</name>
+            <url>http://iesl.cs.umass.edu:8081/nexus/content/repositories/snapshots/</url>
         </repository>
         <repository>
             <id>typesafe</id>

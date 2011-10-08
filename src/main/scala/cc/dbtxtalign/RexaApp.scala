@@ -12,7 +12,7 @@ import cc.refectorie.user.kedarb.dynprog.InferSpec
  * @author kedar
  */
 
-object RexaKB extends KB("rexa",
+object RexaKB extends KB("rexa-scratch",
   DBAlignConfig.get[String]("mongoHostname", "localhost"),
   DBAlignConfig.get[Int]("mongoPort", 27017))
 
