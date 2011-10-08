@@ -185,7 +185,7 @@ object RexaApp extends ARexaAlign {
     var hmmParams = newSegmentParams(true, true, labelIndexer, wordFeatureIndexer)
     hmmParams.setUniform_!
     hmmParams.normalize_!(1e-2)
-    hmmParams = learnEMSegmentParamsHMM(20, examples, hmmParams, 1e-2, 1e-2)
+    hmmParams = learnEMSegmentParamsHMM(20, rawMentions, hmmParams, 1e-2, 1e-2)
     decodeSegmentation("rexa.hmm.true.txt", "rexa.hmm.pred.txt", rawMentions, (m: Mention) => {
       val ex = id2fExample(m.id)
       val inferencer = new HMMSegmentationInferencer(labelIndexer, maxLengths, ex, hmmParams, hmmParams,

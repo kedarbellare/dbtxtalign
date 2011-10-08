@@ -34,18 +34,10 @@ trait AMatchOnlySegmentationInferencer[Feature, Example <: AFeatAlignmentMention
   def alignFeaturizer: (Int, String, Int, Int, String, Int, Int) => FtrVec
 
   def scoreSimilarity(otherIndex: Int, a: Int, i: Int, j: Int, oi: Int, oj: Int) = {
-    //    val key = SegmentAlignment(otherIds(otherIndex), a, i, j, oi, oj)
-    //    if (!ex.cachedAlignFeatures.contains(key))
-    //      ex.cachedAlignFeatures(key) = alignFeaturizer(a, words.slice(i, j), otherWordsSeq(otherIndex).slice(oi, oj))
-    //    score(alignParams(a), ex.cachedAlignFeatures(key))
     score(alignParams(a), alignFeaturizer(a, ex.id, i, j, otherIds(otherIndex), oi, oj))
   }
 
   def updateSimilarity(otherIndex: Int, a: Int, i: Int, j: Int, oi: Int, oj: Int, v: Double) {
-    //    val key = SegmentAlignment(otherIds(otherIndex), a, i, j, oi, oj)
-    //    if (!ex.cachedAlignFeatures.contains(key))
-    //      ex.cachedAlignFeatures(key) = alignFeaturizer(a, words.slice(i, j), otherWordsSeq(otherIndex).slice(oi, oj))
-    //    update(alignCounts(a), ex.cachedAlignFeatures(key), v)
     update(alignCounts(a), alignFeaturizer(a, ex.id, i, j, otherIds(otherIndex), oi, oj), v)
   }
 }

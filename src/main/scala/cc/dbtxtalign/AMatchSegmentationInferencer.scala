@@ -28,14 +28,14 @@ trait AMatchSegmentationInferencer[Feature, Example <: AFeatAlignmentMentionExam
   override lazy val alignCounts = counts.aligns.labelAligns
 
   // (label, phrase, otherPhrase) => alignFeatureVector
-  def alignFeaturizer: (Int, Seq[String], Seq[String]) => FtrVec
+  def alignFeaturizer: (Int, String, Int, Int, String, Int, Int) => FtrVec
 }
 
 class CRFMatchSegmentationInferencer(val labelIndexer: Indexer[String], val maxLengths: Seq[Int],
+                                     val alignFeaturizer: (Int, String, Int, Int, String, Int, Int) => FtrVec,
                                      val ex: FeatVecAlignmentMentionExample,
                                      val params: Params, val counts: Params, val ispec: InferSpec,
-                                     val trueMatchInfer: Boolean, val trueSegmentInfer: Boolean,
-                                     val alignFeaturizer: (Int, Seq[String], Seq[String]) => FtrVec)
+                                     val trueMatchInfer: Boolean, val trueSegmentInfer: Boolean)
   extends AMatchSegmentationInferencer[FtrVec, FeatVecAlignmentMentionExample] {
   lazy val featSeq: Seq[FtrVec] = ex.featSeq
 
@@ -46,18 +46,10 @@ class CRFMatchSegmentationInferencer(val labelIndexer: Indexer[String], val maxL
   }
 
   def scoreSimilarity(otherIndex: Int, a: Int, i: Int, j: Int, oi: Int, oj: Int) = {
-    //    val key = SegmentAlignment(otherIds(otherIndex), a, i, j, oi, oj)
-    //    if (!ex.cachedAlignFeatures.contains(key))
-    //      ex.cachedAlignFeatures(key) = alignFeaturizer(a, words.slice(i, j), otherWordsSeq(otherIndex).slice(oi, oj))
-    //    score(alignParams(a), ex.cachedAlignFeatures(key))
-    score(alignParams(a), alignFeaturizer(a, words.slice(i, j), otherWordsSeq(otherIndex).slice(oi, oj)))
+    score(alignParams(a), alignFeaturizer(a, ex.id, i, j, otherIds(otherIndex), oi, oj))
   }
 
   def updateSimilarity(otherIndex: Int, a: Int, i: Int, j: Int, oi: Int, oj: Int, v: Double) {
-    //    val key = SegmentAlignment(otherIds(otherIndex), a, i, j, oi, oj)
-    //    if (!ex.cachedAlignFeatures.contains(key))
-    //      ex.cachedAlignFeatures(key) = alignFeaturizer(a, words.slice(i, j), otherWordsSeq(otherIndex).slice(oi, oj))
-    //    update(alignCounts(a), ex.cachedAlignFeatures(key), v)
-    update(alignCounts(a), alignFeaturizer(a, words.slice(i, j), otherWordsSeq(otherIndex).slice(oi, oj)), v)
+    update(alignCounts(a), alignFeaturizer(a, ex.id, i, j, otherIds(otherIndex), oi, oj), v)
   }
 }

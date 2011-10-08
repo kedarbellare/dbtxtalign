@@ -260,6 +260,8 @@ object BFTApp extends ABFTAlign {
       id2fExample(m.id) = toFeatExample(m)
       id2fvecExample(m.id) = toFeatVecExample(m)
       tokenSimilarityIndex.index(m.id, m.words)
+      bigramSimilarityIndex.index(m.id, m.words)
+      trigramSimilarityIndex.index(m.id, m.words)
     }
 
     val fExamples = id2fExample.values.toSeq
@@ -276,7 +278,7 @@ object BFTApp extends ABFTAlign {
     var hmmParams = newSegmentParams(true, true, labelIndexer, wordFeatureIndexer)
     hmmParams.setUniform_!
     hmmParams.normalize_!(1e-2)
-    hmmParams = learnEMSegmentParamsHMM(1, fExamples, hmmParams, 1e-2, 1e-2)
+    hmmParams = learnEMSegmentParamsHMM(20, rawMentions, hmmParams, 1e-2, 1e-2)
     decodeSegmentation("bft.hmm.true.txt", "bft.hmm.pred.txt", rawMentions, (m: Mention) => {
       val ex = id2fExample(m.id)
       val inferencer = new HMMSegmentationInferencer(labelIndexer, maxLengths, ex, hmmParams, hmmParams,
@@ -306,6 +308,17 @@ object BFTApp extends ABFTAlign {
     hplAlignParams1.labelAligns(localAreaIndex).increment_!(alignFeatureIndexer.indexOf_?(_gte(FUZZY_JACCARD, 0.9)), 1.0)
     hplAlignParams1.labelAligns(starRatingIndex).increment_!(alignFeatureIndexer.indexOf_?(_gte(JACCARD, 1.0)), 1.0)
 
+    val hplMentions = new ArrayBuffer[Mention]
+    val hplOtherMentions = new ArrayBuffer[Seq[Mention]]
+    for (m1 <- rawTexts) {
+      for (m2 <- rawRecords if blocker.isPair(m1.id, m2.id)) {
+        hplMentions += m1
+        hplOtherMentions += Seq(m2)
+      }
+    }
+    decodeMatchOnlySegmentation(hplMentions, hplOtherMentions, id2cluster, hplAlignParams1, 3.0)
+
+/*
     var numMatches = 0
     var tpMatches = 0
     var fpMatches = 0
@@ -356,6 +369,7 @@ object BFTApp extends ABFTAlign {
     logger.info("")
     logger.info("#tpMatches=" + tpMatches + " #fpMatches=" + fpMatches +
       " #fnMatches=" + fnMatches + " #hplMatches=" + hplMatches + " #matches=" + numMatches)
+*/
 
     // 5. Do alignment using gold-standard clusters
 
