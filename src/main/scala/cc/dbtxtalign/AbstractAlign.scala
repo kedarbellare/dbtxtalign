@@ -16,6 +16,8 @@ import optimization.stopCriteria.AverageValueDifference
 import org.riedelcastro.nurupo.HasLogger
 import akka.actor.Actor
 import Actor._
+import akka.util.duration._
+import akka.util.Duration
 
 /**
  * @author kedar
@@ -30,6 +32,8 @@ trait AbstractAlign extends HasLogger {
   val alignFeatureIndexer = new Indexer[String]
   val maxLengths = new ArrayBuffer[Int]
   val otherLabelIndex = labelIndexer.indexOf_!("O")
+
+  val MAXTIME: Long = (1 day).toMillis
 
   def simplify(s: String): String
 
@@ -240,6 +244,10 @@ trait AbstractAlign extends HasLogger {
   // Learning functions
   sealed trait LearnMessage
 
+  case object MasterStartMessage extends LearnMessage
+
+  case object MasterDoneMessage extends LearnMessage
+
   case class ProcessMentions(ms: Seq[Mention]) extends LearnMessage
 
   case class ProcessAlignMentions(ms: Seq[Mention], aligns: Seq[Seq[Mention]]) extends LearnMessage
@@ -310,14 +318,14 @@ trait AbstractAlign extends HasLogger {
       val counts = newSegmentParams(true, true, labelIndexer, wordFeatureIndexer)
       var loglike = 0.0
       workers.foreach(worker => {
-        for (result <- (worker !! FinishedMentions).as[SegmentResult]) {
+        for (result <- (worker ? FinishedMentions).as[SegmentResult]) {
           // get work from each worker
           loglike += result.stats.logZ
           counts.add_!(result.counts, 1)
-        }
 
-        // stop worker
-        worker.stop()
+          // stop worker
+          worker.stop()
+        }
       })
 
       logger.info("*** iteration[" + iter + "] loglike=" + loglike)
@@ -390,13 +398,13 @@ trait AbstractAlign extends HasLogger {
 
     val constraints = newSegmentParams(false, true, labelIndexer, featureIndexer)
     constraintWorkers.foreach(worker => {
-      for (result <- (worker !! FinishedMentions).as[SegmentResult]) {
+      for (result <- (worker ? FinishedMentions).as[SegmentResult]) {
         // get work from each worker
         constraints.add_!(result.counts, 1)
-      }
 
-      // stop worker
-      worker.stop()
+        // stop worker
+        worker.stop()
+      }
     })
 
     val objective = new ACRFObjective[SegmentParams](params, invVariance) {
@@ -411,14 +419,14 @@ trait AbstractAlign extends HasLogger {
         val expectations = newSegmentParams(false, true, labelIndexer, featureIndexer)
         val stats = new ProbStats()
         workers.foreach(worker => {
-          for (result <- (worker !! FinishedMentions).as[SegmentResult]) {
+          for (result <- (worker ? FinishedMentions).as[SegmentResult]) {
             // get work from each worker
             stats += result.stats
             expectations.add_!(result.counts, 1)
-          }
 
-          // stop worker
-          worker.stop()
+            // stop worker
+            worker.stop()
+          }
         })
         expectations.add_!(constraints, 1)
         (expectations, stats)
@@ -491,7 +499,8 @@ trait AbstractAlign extends HasLogger {
           doAlignInfer(ms(i), aligns(i))
         })
       case FinishedMentions =>
-        self.channel ! AlignPerfResult(numMatches, tpMatches, fpMatches, fnMatches)
+        self reply AlignPerfResult(numMatches, tpMatches, fpMatches, fnMatches)
+        self.stop()
     }
   }
 
@@ -509,21 +518,19 @@ trait AbstractAlign extends HasLogger {
     var tp = 0
     var fp = 0
     var fn = 0
-    workers.foreach(worker => {
-      // get work from each worker
-      for (result <- (worker !! FinishedMentions).as[AlignPerfResult]) {
+    var doneWorkers = 0
+    for (worker <- workers) {
+      for (result <- worker.!!(FinishedMentions, MAXTIME).as[AlignPerfResult]) {
         total += result.total
         tp += result.tp
         fp += result.fp
         fn += result.fn
+        doneWorkers += 1
+        if (doneWorkers == numWorkers) {
+          logger.info("result[" + MAXTIME + "]: " + AlignPerfResult(total, tp, fp, fn))
+        }
       }
-
-      // stop worker
-      worker.stop()
-    })
-
-    logger.info("")
-    logger.info("#tpMatches=" + tp + " #fpMatches=" + fp + " #fnMatches=" + fn + " #matches=" + total)
+    }
   }
 
   /*
