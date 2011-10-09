@@ -15,9 +15,9 @@ import params._
 import optimization.stopCriteria.AverageValueDifference
 import org.riedelcastro.nurupo.HasLogger
 import akka.actor.Actor
-import Actor._
+import akka.actor.Actor._
 import akka.util.duration._
-import akka.util.Duration
+import java.util.concurrent.CountDownLatch
 
 /**
  * @author kedar
@@ -33,7 +33,7 @@ trait AbstractAlign extends HasLogger {
   val maxLengths = new ArrayBuffer[Int]
   val otherLabelIndex = labelIndexer.indexOf_!("O")
 
-  val MAXTIME: Long = (1 day).toMillis
+  val MAXTIME: Long = (30 days).toMillis
 
   def simplify(s: String): String
 
@@ -272,6 +272,8 @@ trait AbstractAlign extends HasLogger {
 
     def unlabeledWeight: Double
 
+    def latch: CountDownLatch
+
     def updateProgress(done: Boolean = false) {
       progress += 1
       if (progress % 1000 == 0 || done) logger.info("Processed " + progress + " mentions")
@@ -290,11 +292,14 @@ trait AbstractAlign extends HasLogger {
       case FinishedMentions =>
         updateProgress(true)
         self.channel ! SegmentResult(stats, counts)
+        latch.countDown()
+        self.stop()
     }
   }
 
   // 1. Segment HMM trained with EM
-  class HMMWorker(val iter: Int, val params: SegmentParams, val unlabeledWeight: Double) extends SegmentationWorker {
+  class HMMWorker(val iter: Int, val params: SegmentParams, val unlabeledWeight: Double,
+                   val latch: CountDownLatch) extends SegmentationWorker {
     val counts = newSegmentParams(true, true, labelIndexer, wordFeatureIndexer)
 
     def doInfer(m: Mention, stepSize: Double) {
@@ -310,7 +315,8 @@ trait AbstractAlign extends HasLogger {
     var params = hmmParams
     for (iter <- 1 to numIter) {
       // create the workers
-      val workers = Vector.fill(numWorkers)(actorOf(new HMMWorker(iter, params, unlabeledWeight)).start())
+      val latch = new CountDownLatch(numWorkers)
+      val workers = Vector.fill(numWorkers)(actorOf(new HMMWorker(iter, params, unlabeledWeight, latch)).start())
       for (b <- 0 until numBatches(mentions.size)) {
         workers(b % numWorkers) ! ProcessMentions(mentions.slice(b * batchSize, (b + 1) * batchSize))
       }
@@ -318,15 +324,13 @@ trait AbstractAlign extends HasLogger {
       val counts = newSegmentParams(true, true, labelIndexer, wordFeatureIndexer)
       var loglike = 0.0
       workers.foreach(worker => {
-        for (result <- (worker ? FinishedMentions).as[SegmentResult]) {
+        for (result <- worker.!!(FinishedMentions, MAXTIME).as[SegmentResult]) {
           // get work from each worker
           loglike += result.stats.logZ
           counts.add_!(result.counts, 1)
-
-          // stop worker
-          worker.stop()
         }
       })
+      latch.await()
 
       logger.info("*** iteration[" + iter + "] loglike=" + loglike)
       counts.normalize_!(smoothing)
@@ -360,7 +364,8 @@ trait AbstractAlign extends HasLogger {
   }
 
   // 2. Segment CRF trained on high-precision segmentations
-  class CRFConstraintsWorker(val iter: Int, val params: SegmentParams, val unlabeledWeight: Double)
+  class CRFConstraintsWorker(val iter: Int, val params: SegmentParams,
+                             val unlabeledWeight: Double, val latch: CountDownLatch)
     extends SegmentationWorker {
     val counts = newSegmentParams(false, true, labelIndexer, featureIndexer)
 
@@ -372,7 +377,8 @@ trait AbstractAlign extends HasLogger {
     }
   }
 
-  class CRFExpectationWorker(val iter: Int, val params: SegmentParams, val unlabeledWeight: Double)
+  class CRFExpectationWorker(val iter: Int, val params: SegmentParams,
+                             val unlabeledWeight: Double, val latch: CountDownLatch)
     extends SegmentationWorker {
     val counts = newSegmentParams(false, true, labelIndexer, featureIndexer)
 
@@ -391,27 +397,29 @@ trait AbstractAlign extends HasLogger {
   def learnSupervisedSegmentParamsCRF(numIter: Int, mentions: Seq[Mention], params: SegmentParams,
                                       unlabeledWeight: Double, invVariance: Double): SegmentParams = {
     // create the workers
-    val constraintWorkers = Vector.fill(numWorkers)(actorOf(new CRFConstraintsWorker(0, params, unlabeledWeight)).start())
+    val constraintLatch = new CountDownLatch(numWorkers)
+    val constraintWorkers = Vector.fill(numWorkers)(
+      actorOf(new CRFConstraintsWorker(0, params, unlabeledWeight, constraintLatch)).start())
     for (b <- 0 until numBatches(mentions.size)) {
       constraintWorkers(b % numWorkers) ! ProcessMentions(mentions.slice(b * batchSize, (b + 1) * batchSize))
     }
 
     val constraints = newSegmentParams(false, true, labelIndexer, featureIndexer)
     constraintWorkers.foreach(worker => {
-      for (result <- (worker ? FinishedMentions).as[SegmentResult]) {
+      for (result <- worker.!!(FinishedMentions, MAXTIME).as[SegmentResult]) {
         // get work from each worker
         constraints.add_!(result.counts, 1)
-
-        // stop worker
-        worker.stop()
       }
     })
+    constraintLatch.await()
 
     val objective = new ACRFObjective[SegmentParams](params, invVariance) {
       def logger = Logger.getLogger("high-precision-crf-trainer")
 
       def getValueAndGradient = {
-        val workers = Vector.fill(numWorkers)(actorOf(new CRFExpectationWorker(0, params, unlabeledWeight)).start())
+        val expectationLatch = new CountDownLatch(numWorkers)
+        val workers = Vector.fill(numWorkers)(
+          actorOf(new CRFExpectationWorker(0, params, unlabeledWeight, expectationLatch)).start())
         for (b <- 0 until numBatches(mentions.size)) {
           workers(b % numWorkers) ! ProcessMentions(mentions.slice(b * batchSize, (b + 1) * batchSize))
         }
@@ -423,11 +431,9 @@ trait AbstractAlign extends HasLogger {
             // get work from each worker
             stats += result.stats
             expectations.add_!(result.counts, 1)
-
-            // stop worker
-            worker.stop()
           }
         })
+        expectationLatch.await()
         expectations.add_!(constraints, 1)
         (expectations, stats)
       }
@@ -451,7 +457,7 @@ trait AbstractAlign extends HasLogger {
 
   // 3. High-precision alignment segmentation
   class ViterbiAlignmentMatchOnlyWorker(val id2cluster: HashMap[String, String], val alignParams: AlignParams,
-                                        val matchThreshold: Double)
+                                        val matchThreshold: Double, val latch: CountDownLatch)
     extends Actor {
     var numMatches = 0
     var tpMatches = 0
@@ -499,7 +505,8 @@ trait AbstractAlign extends HasLogger {
           doAlignInfer(ms(i), aligns(i))
         })
       case FinishedMentions =>
-        self reply AlignPerfResult(numMatches, tpMatches, fpMatches, fnMatches)
+        self.channel ! AlignPerfResult(numMatches, tpMatches, fpMatches, fnMatches)
+        latch.countDown()
         self.stop()
     }
   }
@@ -507,8 +514,9 @@ trait AbstractAlign extends HasLogger {
   def decodeMatchOnlySegmentation(mentions: Seq[Mention], otherMentions: Seq[Seq[Mention]],
                                   id2cluster: HashMap[String, String], params: AlignParams,
                                   matchThreshold: Double) {
+    val latch = new CountDownLatch(numWorkers)
     val workers = Vector.fill(numWorkers)(
-      actorOf(new ViterbiAlignmentMatchOnlyWorker(id2cluster, params, matchThreshold)).start())
+      actorOf(new ViterbiAlignmentMatchOnlyWorker(id2cluster, params, matchThreshold, latch)).start())
     for (b <- 0 until numBatches(mentions.size)) {
       workers(b % numWorkers) ! ProcessAlignMentions(mentions.slice(b * batchSize, (b + 1) * batchSize),
         otherMentions.slice(b * batchSize, (b + 1) * batchSize))
@@ -518,19 +526,16 @@ trait AbstractAlign extends HasLogger {
     var tp = 0
     var fp = 0
     var fn = 0
-    var doneWorkers = 0
     for (worker <- workers) {
       for (result <- worker.!!(FinishedMentions, MAXTIME).as[AlignPerfResult]) {
         total += result.total
         tp += result.tp
         fp += result.fp
         fn += result.fn
-        doneWorkers += 1
-        if (doneWorkers == numWorkers) {
-          logger.info("result[" + MAXTIME + "]: " + AlignPerfResult(total, tp, fp, fn))
-        }
       }
     }
+    latch.await()
+    logger.info("result[" + MAXTIME + "]: " + AlignPerfResult(total, tp, fp, fn))
   }
 
   /*
