@@ -7,6 +7,7 @@ import com.mongodb.casbah.commons.Imports._
 import cc.refectorie.user.kedarb.dynprog.types.FtrVec
 import collection.mutable.{ArrayBuffer, HashMap}
 import cc.refectorie.user.kedarb.dynprog.InferSpec
+import org.riedelcastro.nurupo.Counting
 
 /**
  * @author kedar
@@ -163,14 +164,15 @@ object RexaApp extends ARexaAlign {
     val id2mention = new HashMap[String, Mention]
     val id2fExample = new HashMap[String, FeatMentionExample]
     val id2fvecExample = new HashMap[String, FeatVecMentionExample]
-    var numMentions = 0
-    val maxMentions = rawMentions.size
-    for (m <- rawMentions) {
+    val mentionCounting = new Counting(1000, cnt => logger.info("Processed " + cnt + "/" + rawMentions.size))
+    for (m <- mentionCounting(rawMentions)) {
       id2mention(m.id) = m
       id2fExample(m.id) = toFeatExample(m)
       id2fvecExample(m.id) = toFeatVecExample(m)
-      numMentions += 1
-      if (numMentions % 1000 == 0) logger.info("Processed " + numMentions + "/" + maxMentions)
+      token2WordIndices(m.id) = m.words.map(wordIndexer.indexOf_!(_))
+      tokenSimilarityIndex.index(m.id, m.words)
+      bigramSimilarityIndex.index(m.id, m.words)
+      trigramSimilarityIndex.index(m.id, m.words)
     }
 
     val id2cluster = FileHelper.getMapping1to2(args(0))

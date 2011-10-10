@@ -2,6 +2,7 @@ package cc.dbtxtalign
 
 import blocking.AbstractBlocker
 import collection.mutable.{HashSet, ArrayBuffer, HashMap}
+import fastsim.SimilarityIndex
 import java.io.PrintWriter
 import org.apache.log4j.Logger
 import cc.refectorie.user.kedarb.dynprog.types.{ParamUtils, FtrVec, Indexer}
@@ -18,6 +19,7 @@ import akka.actor.Actor
 import akka.actor.Actor._
 import akka.util.duration._
 import java.util.concurrent.CountDownLatch
+import phrasematch.ObjectStringScorer
 
 /**
  * @author kedar
@@ -32,6 +34,59 @@ trait AbstractAlign extends HasLogger {
   val alignFeatureIndexer = new Indexer[String]
   val maxLengths = new ArrayBuffer[Int]
   val otherLabelIndex = labelIndexer.indexOf_!("O")
+
+  val token2WordIndices = new HashMap[String, Seq[Int]]
+  val tokenSimilarityIndex = new SimilarityIndex(s => ObjectStringScorer.getTokens(Seq(s)))
+  val bigramSimilarityIndex = new SimilarityIndex(s => ObjectStringScorer.getNgramTokens(Seq(s), 2))
+  val trigramSimilarityIndex = new SimilarityIndex(s => ObjectStringScorer.getNgramTokens(Seq(s), 3))
+
+  val BIAS_MATCH = "bias_match"
+  val CHAR2_JACCARD = "char_jaccard[n=2]"
+  val CHAR2_JACCARD_CONTAINS = "char_jaccard_contains[n=2]"
+  val CHAR3_JACCARD = "char_jaccard[n=3]"
+  val FUZZY_JACCARD_CONTAINS = "fuzzy_jaccard_contains"
+  val FUZZY_JACCARD = "fuzzy_jaccard"
+  val SOFT_JACCARD70 = "soft_jaccard[>=0.70]"
+  val SOFT_JACCARD85 = "soft_jaccard[>=0.85]"
+  val SOFT_JACCARD90 = "soft_jaccard[>=0.90]"
+  val SOFT_JACCARD95 = "soft_jaccard[>=0.95]"
+  val SOFT_JACCARD70_CONTAINS = "soft_jaccard_contains[>=0.70]"
+  val SOFT_JACCARD85_CONTAINS = "soft_jaccard_contains[>=0.85]"
+  val SOFT_JACCARD90_CONTAINS = "soft_jaccard_contains[>=0.90]"
+  val SOFT_JACCARD95_CONTAINS = "soft_jaccard_contains[>=0.95]"
+  val JACCARD = "jaccard"
+  val JACCARD_CONTAINS = "jaccard_contains"
+  val SIM_BINS = Seq(0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95, 1.0)
+
+  alignFeatureIndexer += BIAS_MATCH
+  for (s <- SIM_BINS) {
+    addThresholdFeaturesToIndexer(alignFeatureIndexer, CHAR2_JACCARD, s)
+    addThresholdFeaturesToIndexer(alignFeatureIndexer, CHAR2_JACCARD_CONTAINS, s)
+    addThresholdFeaturesToIndexer(alignFeatureIndexer, CHAR3_JACCARD, s)
+    addThresholdFeaturesToIndexer(alignFeatureIndexer, FUZZY_JACCARD, s)
+    addThresholdFeaturesToIndexer(alignFeatureIndexer, FUZZY_JACCARD_CONTAINS, s)
+    addThresholdFeaturesToIndexer(alignFeatureIndexer, SOFT_JACCARD70, s)
+    addThresholdFeaturesToIndexer(alignFeatureIndexer, SOFT_JACCARD85, s)
+    addThresholdFeaturesToIndexer(alignFeatureIndexer, SOFT_JACCARD90, s)
+    addThresholdFeaturesToIndexer(alignFeatureIndexer, SOFT_JACCARD95, s)
+    addThresholdFeaturesToIndexer(alignFeatureIndexer, SOFT_JACCARD70_CONTAINS, s)
+    addThresholdFeaturesToIndexer(alignFeatureIndexer, SOFT_JACCARD85_CONTAINS, s)
+    addThresholdFeaturesToIndexer(alignFeatureIndexer, SOFT_JACCARD90_CONTAINS, s)
+    addThresholdFeaturesToIndexer(alignFeatureIndexer, SOFT_JACCARD95_CONTAINS, s)
+    addThresholdFeaturesToIndexer(alignFeatureIndexer, JACCARD, s)
+    addThresholdFeaturesToIndexer(alignFeatureIndexer, JACCARD_CONTAINS, s)
+  }
+
+  def approxTokenMatcher(t1: String, t2: String): Double = {
+    if (ObjectStringScorer.getThresholdLevenshtein(t1, t2, 2) <= 1 ||
+      ObjectStringScorer.getJaroWinklerScore(t1, t2) >= 0.95) 1
+    else 0
+  }
+
+  def approxJaroWinklerScorer(t1: String, t2: String, threshold: Double = 0.95): Double = {
+    val score = ObjectStringScorer.getJaroWinklerScore(t1, t2)
+    if (score >= threshold) score else 0
+  }
 
   val MAXTIME: Long = (30 days).toMillis
 
@@ -146,7 +201,43 @@ trait AbstractAlign extends HasLogger {
     })
   }
 
-  def getAlignFeatureVector(l: Int, id1: String, i1: Int, j1: Int, id2: String, i2: Int, j2: Int): FtrVec = new FtrVec
+  def getAlignFeatureVector(l: Int, id1: String, i1: Int, j1: Int, id2: String, i2: Int, j2: Int): FtrVec = {
+    val fv = new FtrVec
+    val char2Jacc = bigramSimilarityIndex.jaccardScore(id1, i1, j1, id2, i2, j2)
+    val char2JaccContains = bigramSimilarityIndex.containsJaccardScore(id1, i1, j1, id2, i2, j2)
+    val char3Jacc = trigramSimilarityIndex.jaccardScore(id1, i1, j1, id2, i2, j2)
+    val fuzzyJacc = tokenSimilarityIndex.approxJaccardScorer(id1, i1, j1, id2, i2, j2, approxTokenMatcher(_, _))
+    val fuzzyJaccContains = tokenSimilarityIndex.approxJaccardContainScorer(id1, i1, j1, id2, i2, j2, approxTokenMatcher(_, _))
+    val softJacc70 = tokenSimilarityIndex.approxJaccardScorer(id1, i1, j1, id2, i2, j2, approxJaroWinklerScorer(_, _, 0.70))
+    val softJacc85 = tokenSimilarityIndex.approxJaccardScorer(id1, i1, j1, id2, i2, j2, approxJaroWinklerScorer(_, _, 0.85))
+    val softJacc90 = tokenSimilarityIndex.approxJaccardScorer(id1, i1, j1, id2, i2, j2, approxJaroWinklerScorer(_, _, 0.90))
+    val softJacc95 = tokenSimilarityIndex.approxJaccardScorer(id1, i1, j1, id2, i2, j2, approxJaroWinklerScorer(_, _, 0.95))
+    val softJacc70Contains = tokenSimilarityIndex.approxJaccardContainScorer(id1, i1, j1, id2, i2, j2, approxJaroWinklerScorer(_, _, 0.70))
+    val softJacc85Contains = tokenSimilarityIndex.approxJaccardContainScorer(id1, i1, j1, id2, i2, j2, approxJaroWinklerScorer(_, _, 0.85))
+    val softJacc90Contains = tokenSimilarityIndex.approxJaccardContainScorer(id1, i1, j1, id2, i2, j2, approxJaroWinklerScorer(_, _, 0.90))
+    val softJacc95Contains = tokenSimilarityIndex.approxJaccardContainScorer(id1, i1, j1, id2, i2, j2, approxJaroWinklerScorer(_, _, 0.95))
+    val jacc = tokenSimilarityIndex.jaccardScore(id1, i1, j1, id2, i2, j2)
+    val jaccContains = tokenSimilarityIndex.containsJaccardScore(id1, i1, j1, id2, i2, j2)
+    fv += alignFeatureIndexer.indexOf_?(BIAS_MATCH) -> 1.0
+    for (sim <- SIM_BINS) {
+      addFeatureToVector_?(fv, alignFeatureIndexer, char2Jacc, sim, CHAR2_JACCARD)
+      addFeatureToVector_?(fv, alignFeatureIndexer, char2JaccContains, sim, CHAR2_JACCARD_CONTAINS)
+      addFeatureToVector_?(fv, alignFeatureIndexer, char3Jacc, sim, CHAR3_JACCARD)
+      addFeatureToVector_?(fv, alignFeatureIndexer, fuzzyJacc, sim, FUZZY_JACCARD)
+      addFeatureToVector_?(fv, alignFeatureIndexer, fuzzyJaccContains, sim, FUZZY_JACCARD_CONTAINS)
+      addFeatureToVector_?(fv, alignFeatureIndexer, softJacc70, sim, SOFT_JACCARD70)
+      addFeatureToVector_?(fv, alignFeatureIndexer, softJacc85, sim, SOFT_JACCARD85)
+      addFeatureToVector_?(fv, alignFeatureIndexer, softJacc90, sim, SOFT_JACCARD90)
+      addFeatureToVector_?(fv, alignFeatureIndexer, softJacc95, sim, SOFT_JACCARD95)
+      addFeatureToVector_?(fv, alignFeatureIndexer, softJacc70Contains, sim, SOFT_JACCARD70_CONTAINS)
+      addFeatureToVector_?(fv, alignFeatureIndexer, softJacc85Contains, sim, SOFT_JACCARD85_CONTAINS)
+      addFeatureToVector_?(fv, alignFeatureIndexer, softJacc90Contains, sim, SOFT_JACCARD90_CONTAINS)
+      addFeatureToVector_?(fv, alignFeatureIndexer, softJacc95Contains, sim, SOFT_JACCARD95_CONTAINS)
+      addFeatureToVector_?(fv, alignFeatureIndexer, jacc, sim, JACCARD)
+      addFeatureToVector_?(fv, alignFeatureIndexer, jaccContains, sim, JACCARD_CONTAINS)
+    }
+    fv
+  }
 
   def getBIOFromSegmentation(segmentation: Segmentation): Seq[String] = {
     val OTHER = labelIndexer(otherLabelIndex)
@@ -564,6 +655,78 @@ trait AbstractAlign extends HasLogger {
     latch.await()
     logger.info("#matches=" + total + " #tpMatches=" + tp + " #fpMatches=" + fp + " #fnMatches=" + fn)
     hplMentions
+  }
+
+  // 4. Paraphrase extraction
+  def dumpParaphraseExtractions(rawRecords: Seq[Mention], rawTexts: Seq[Mention], blocker: AbstractBlocker,
+                                id2fExample: HashMap[String, FeatMentionExample], countThresh: Double = 5) {
+    val recordTable = new HashWeightVec[Seq[Int]]()
+    for (r <- rawRecords) {
+      val rx = id2fExample(r.id)
+      val rxSegmentation = rx.trueSegmentation
+      val rxWordFeatures = rx.featSeq
+      for (i <- 0 until rxSegmentation.numSegments) {
+        val rxSegment = rxSegmentation.segment(i)
+        val rxPhrase = rxWordFeatures.slice(rxSegment.begin, rxSegment.end)
+        recordTable.increment_!(rxPhrase, 1)
+      }
+    }
+    val textTable = new HashWeightVec[Seq[Int]]()
+    for (t <- rawTexts) {
+      val tx = id2fExample(t.id)
+      val txWordFeatures = tx.featSeq
+      for (b <- 0 until tx.words.length) {
+        for (e <- (b + 1) to tx.words.length) {
+          val txPhrase = txWordFeatures.slice(b, e)
+          textTable.increment_!(txPhrase, 1)
+        }
+      }
+    }
+    val phraseTranslateTable = new HashWeightVec[(Seq[Int], Seq[Int])]()
+    val bipartiteWt = 1.0
+    for (r <- rawRecords) {
+      val rx = id2fExample(r.id)
+      val rxSegmentation = rx.trueSegmentation
+      val rxWordFeatures = rx.featSeq
+      for (t <- rawTexts if blocker.isPair(r.id, t.id)) {
+        // iterate over record fields & text segments
+        val tx = id2fExample(t.id)
+        val txWordFeatures = tx.featSeq
+        for (i <- 0 until rxSegmentation.numSegments) {
+          val rxSegment = rxSegmentation.segment(i)
+          val rxPhrase = rxWordFeatures.slice(rxSegment.begin, rxSegment.end)
+          for (b <- 0 until tx.words.length) {
+            for (e <- (b + 1) to tx.words.length) {
+              val txPhrase = txWordFeatures.slice(b, e)
+              if (recordTable(rxPhrase) >= countThresh && textTable(txPhrase) >= countThresh)
+                phraseTranslateTable.increment_!(rxPhrase -> txPhrase, bipartiteWt)
+            }
+          }
+        }
+      }
+      print(".")
+      System.out.flush()
+    }
+    println()
+    val recordTableOut = new PrintWriter("record-phrase-table.txt")
+    for ((phrase, count) <- recordTable if count >= countThresh) {
+      recordTableOut.println(count + "\t" + phrase.map(wordFeatureIndexer(_)).mkString(" "))
+    }
+    recordTableOut.close()
+    val textTableOut = new PrintWriter("text-phrase-table.txt")
+    for ((phrase, count) <- textTable if count >= countThresh) {
+      textTableOut.println(count + "\t" + phrase.map(wordFeatureIndexer(_)).mkString(" "))
+    }
+    textTableOut.close()
+    val phraseTranslateTableOut = new PrintWriter("phrase-translate-table.txt")
+    for ((phraseTranslation, count) <- phraseTranslateTable if count >= countThresh) {
+      val recPhrase = phraseTranslation._1
+      val txtPhrase = phraseTranslation._2
+      phraseTranslateTableOut.println(count +
+        "\t" + recPhrase.map(wordFeatureIndexer(_)).mkString(" ") +
+        "\t" + txtPhrase.map(wordFeatureIndexer(_)).mkString(" "))
+    }
+    phraseTranslateTableOut.close()
   }
 
   /*

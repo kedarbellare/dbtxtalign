@@ -3,12 +3,10 @@ package cc.dbtxtalign
 import cc.refectorie.user.kedarb.dynprog.utils.Utils._
 import com.mongodb.casbah.Imports._
 import blocking.{AbstractBlocker, UnionIndexBlocker, InvertedIndexBlocker, PhraseHash}
-import fastsim._
-import phrasematch._
 import mongo.KB
-import cc.refectorie.user.kedarb.dynprog.types.FtrVec
 import cc.refectorie.user.kedarb.dynprog.InferSpec
-import collection.mutable.{HashSet, ArrayBuffer, HashMap}
+import collection.mutable.{ArrayBuffer, HashMap}
+import cc.refectorie.user.kedarb.dynprog.types.{Indexer, FtrVec}
 
 /**
  * @author kedar
@@ -154,95 +152,45 @@ object BFTApp extends ABFTAlign {
   val localAreaIndex = labelIndexer.indexOf_!("localarea")
   val starRatingIndex = labelIndexer.indexOf_!("starrating")
 
-  val tokenSimilarityIndex = new SimilarityIndex(s => ObjectStringScorer.getTokens(Seq(s)))
-  val bigramSimilarityIndex = new SimilarityIndex(s => ObjectStringScorer.getNgramTokens(Seq(s), 2))
-  val trigramSimilarityIndex = new SimilarityIndex(s => ObjectStringScorer.getNgramTokens(Seq(s), 3))
+  // Add translation dictionary
+  val word_dt_index = wordIndexer.indexOf_!("dt")
+  val word_downtown_indices = Seq("downtown").map(wordIndexer.indexOf_!(_))
+  val word_mv_index = wordIndexer.indexOf_!("mv")
+  val word_mission_valley_indices = Seq("mission", "valley").map(wordIndexer.indexOf_!(_))
+  val word_ap_index = wordIndexer.indexOf_!("ap")
+  val word_airport_pit_indices = Seq("airport", "pit").map(wordIndexer.indexOf_!(_))
 
-  val BIAS_MATCH = "bias_match"
-  val CHAR2_JACCARD = "char_jaccard[n=2]"
-  val CHAR2_JACCARD_CONTAINS = "char_jaccard_contains[n=2]"
-  val CHAR3_JACCARD = "char_jaccard[n=3]"
-  val FUZZY_JACCARD_CONTAINS = "fuzzy_jaccard_contains"
-  val FUZZY_JACCARD = "fuzzy_jaccard"
-  val SOFT_JACCARD70 = "soft_jaccard[>=0.70]"
-  val SOFT_JACCARD85 = "soft_jaccard[>=0.85]"
-  val SOFT_JACCARD90 = "soft_jaccard[>=0.90]"
-  val SOFT_JACCARD95 = "soft_jaccard[>=0.95]"
-  val SOFT_JACCARD70_CONTAINS = "soft_jaccard_contains[>=0.70]"
-  val SOFT_JACCARD85_CONTAINS = "soft_jaccard_contains[>=0.85]"
-  val SOFT_JACCARD90_CONTAINS = "soft_jaccard_contains[>=0.90]"
-  val SOFT_JACCARD95_CONTAINS = "soft_jaccard_contains[>=0.95]"
-  val JACCARD = "jaccard"
-  val JACCARD_CONTAINS = "jaccard_contains"
-  val SIM_BINS = Seq(0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95, 1.0)
-
-  alignFeatureIndexer += BIAS_MATCH
-  for (s <- SIM_BINS) {
-    addThresholdFeaturesToIndexer(alignFeatureIndexer, CHAR2_JACCARD, s)
-    addThresholdFeaturesToIndexer(alignFeatureIndexer, CHAR2_JACCARD_CONTAINS, s)
-    addThresholdFeaturesToIndexer(alignFeatureIndexer, CHAR3_JACCARD, s)
-    addThresholdFeaturesToIndexer(alignFeatureIndexer, FUZZY_JACCARD, s)
-    addThresholdFeaturesToIndexer(alignFeatureIndexer, FUZZY_JACCARD_CONTAINS, s)
-    addThresholdFeaturesToIndexer(alignFeatureIndexer, SOFT_JACCARD70, s)
-    addThresholdFeaturesToIndexer(alignFeatureIndexer, SOFT_JACCARD85, s)
-    addThresholdFeaturesToIndexer(alignFeatureIndexer, SOFT_JACCARD90, s)
-    addThresholdFeaturesToIndexer(alignFeatureIndexer, SOFT_JACCARD95, s)
-    addThresholdFeaturesToIndexer(alignFeatureIndexer, SOFT_JACCARD70_CONTAINS, s)
-    addThresholdFeaturesToIndexer(alignFeatureIndexer, SOFT_JACCARD85_CONTAINS, s)
-    addThresholdFeaturesToIndexer(alignFeatureIndexer, SOFT_JACCARD90_CONTAINS, s)
-    addThresholdFeaturesToIndexer(alignFeatureIndexer, SOFT_JACCARD95_CONTAINS, s)
-    addThresholdFeaturesToIndexer(alignFeatureIndexer, JACCARD, s)
-    addThresholdFeaturesToIndexer(alignFeatureIndexer, JACCARD_CONTAINS, s)
-  }
-
-  def approxTokenMatcher(t1: String, t2: String): Double = {
-    if (ObjectStringScorer.getThresholdLevenshtein(t1, t2, 2) <= 1 ||
-      ObjectStringScorer.getJaroWinklerScore(t1, t2) >= 0.95) 1
-    else 0
-  }
-
-  def approxJaroWinklerScorer(t1: String, t2: String, threshold: Double = 0.95): Double = {
-    val score = ObjectStringScorer.getJaroWinklerScore(t1, t2)
-    if (score >= threshold) score else 0
-  }
+  val LOCALAREA_TRANSLATION = "localarea_translation"
+  alignFeatureIndexer += LOCALAREA_TRANSLATION
+  val localareaTranslationf = alignFeatureIndexer.indexOf_!(LOCALAREA_TRANSLATION)
 
   override def getAlignFeatureVector(l: Int, id1: String, i1: Int, j1: Int, id2: String, i2: Int, j2: Int): FtrVec = {
-    val fv = new FtrVec
-    val char2Jacc = bigramSimilarityIndex.jaccardScore(id1, i1, j1, id2, i2, j2)
-    val char2JaccContains = bigramSimilarityIndex.containsJaccardScore(id1, i1, j1, id2, i2, j2)
-    val char3Jacc = trigramSimilarityIndex.jaccardScore(id1, i1, j1, id2, i2, j2)
-    val fuzzyJacc = tokenSimilarityIndex.approxJaccardScorer(id1, i1, j1, id2, i2, j2, approxTokenMatcher(_, _))
-    val fuzzyJaccContains = tokenSimilarityIndex.approxJaccardContainScorer(id1, i1, j1, id2, i2, j2, approxTokenMatcher(_, _))
-    val softJacc70 = tokenSimilarityIndex.approxJaccardScorer(id1, i1, j1, id2, i2, j2, approxJaroWinklerScorer(_, _, 0.70))
-    val softJacc85 = tokenSimilarityIndex.approxJaccardScorer(id1, i1, j1, id2, i2, j2, approxJaroWinklerScorer(_, _, 0.85))
-    val softJacc90 = tokenSimilarityIndex.approxJaccardScorer(id1, i1, j1, id2, i2, j2, approxJaroWinklerScorer(_, _, 0.90))
-    val softJacc95 = tokenSimilarityIndex.approxJaccardScorer(id1, i1, j1, id2, i2, j2, approxJaroWinklerScorer(_, _, 0.95))
-    val softJacc70Contains = tokenSimilarityIndex.approxJaccardContainScorer(id1, i1, j1, id2, i2, j2, approxJaroWinklerScorer(_, _, 0.70))
-    val softJacc85Contains = tokenSimilarityIndex.approxJaccardContainScorer(id1, i1, j1, id2, i2, j2, approxJaroWinklerScorer(_, _, 0.85))
-    val softJacc90Contains = tokenSimilarityIndex.approxJaccardContainScorer(id1, i1, j1, id2, i2, j2, approxJaroWinklerScorer(_, _, 0.90))
-    val softJacc95Contains = tokenSimilarityIndex.approxJaccardContainScorer(id1, i1, j1, id2, i2, j2, approxJaroWinklerScorer(_, _, 0.95))
-    val jacc = tokenSimilarityIndex.jaccardScore(id1, i1, j1, id2, i2, j2)
-    val jaccContains = tokenSimilarityIndex.containsJaccardScore(id1, i1, j1, id2, i2, j2)
-    fv += alignFeatureIndexer.indexOf_?(BIAS_MATCH) -> 1.0
-    for (sim <- SIM_BINS) {
-      addFeatureToVector_?(fv, alignFeatureIndexer, char2Jacc, sim, CHAR2_JACCARD)
-      addFeatureToVector_?(fv, alignFeatureIndexer, char2JaccContains, sim, CHAR2_JACCARD_CONTAINS)
-      addFeatureToVector_?(fv, alignFeatureIndexer, char3Jacc, sim, CHAR3_JACCARD)
-      addFeatureToVector_?(fv, alignFeatureIndexer, fuzzyJacc, sim, FUZZY_JACCARD)
-      addFeatureToVector_?(fv, alignFeatureIndexer, fuzzyJaccContains, sim, FUZZY_JACCARD_CONTAINS)
-      addFeatureToVector_?(fv, alignFeatureIndexer, softJacc70, sim, SOFT_JACCARD70)
-      addFeatureToVector_?(fv, alignFeatureIndexer, softJacc85, sim, SOFT_JACCARD85)
-      addFeatureToVector_?(fv, alignFeatureIndexer, softJacc90, sim, SOFT_JACCARD90)
-      addFeatureToVector_?(fv, alignFeatureIndexer, softJacc95, sim, SOFT_JACCARD95)
-      addFeatureToVector_?(fv, alignFeatureIndexer, softJacc70Contains, sim, SOFT_JACCARD70_CONTAINS)
-      addFeatureToVector_?(fv, alignFeatureIndexer, softJacc85Contains, sim, SOFT_JACCARD85_CONTAINS)
-      addFeatureToVector_?(fv, alignFeatureIndexer, softJacc90Contains, sim, SOFT_JACCARD90_CONTAINS)
-      addFeatureToVector_?(fv, alignFeatureIndexer, softJacc95Contains, sim, SOFT_JACCARD95_CONTAINS)
-      addFeatureToVector_?(fv, alignFeatureIndexer, jacc, sim, JACCARD)
-      addFeatureToVector_?(fv, alignFeatureIndexer, jaccContains, sim, JACCARD_CONTAINS)
+    val fv = super.getAlignFeatureVector(l, id1, i1, j1, id2, i2, j2)
+    if (l == localAreaIndex && j1 - i1 == 1 && j2 - i2 <= 2) {
+      val windex1 = token2WordIndices(id1)(i1)
+      if (windex1 == word_dt_index || windex1 == word_mv_index || windex1 == word_ap_index) {
+        val windices2 = token2WordIndices(id2).slice(i2, j2).toSeq
+        if ((windices2 == word_downtown_indices && windex1 == word_dt_index) ||
+          (windices2 == word_mission_valley_indices && windex1 == word_mv_index) ||
+          (windices2 == word_airport_pit_indices && windex1 == word_ap_index)) {
+          // logger.info("translation found: " + windices2.map(wordIndexer(_)).mkString(" ") + " -> " + wordIndexer(windex1))
+          fv += localareaTranslationf -> 1.0
+        }
+      }
     }
     fv
   }
+
+  // Constraint features
+  val constraintFeatureIndexer = new Indexer[Symbol]
+  // 1. I(hotel >=_{fuzzy_jacc} 0.9) + I(local >=_{fuzzy_jacc} 0.9) + I(star >=_{jacc} 1.0) - I(match) <= 2.0
+  val highSimImpliesMatchf = constraintFeatureIndexer.indexOf_!('highSimilarityImpliesMatch)
+  // 2. I(match && hotel <_{fuzzy_jacc} 0.2)<= 0.1
+  val lowSimHotelAndMatchf = constraintFeatureIndexer.indexOf_!('lowSimilarityHotelAndMatch)
+  // 3. I(match && local <_{fuzzy_jacc} 0.2) <= 0.1
+  val lowSimLocalAndMatchf = constraintFeatureIndexer.indexOf_!('lowSimilarityLocalAndMatch)
+  // 4. I(not(star) && starPattern) <= 0.0
+  val starPatternMismatchf = constraintFeatureIndexer.indexOf_!('starRatingAndNotMatchesPattern)
 
   def main(args: Array[String]) {
     val rawRecords = recordsColl.map(new Mention(_)).toArray
@@ -259,6 +207,7 @@ object BFTApp extends ABFTAlign {
       id2mention(m.id) = m
       id2fExample(m.id) = toFeatExample(m)
       id2fvecExample(m.id) = toFeatVecExample(m)
+      token2WordIndices(m.id) = m.words.map(wordIndexer.indexOf_!(_))
       tokenSimilarityIndex.index(m.id, m.words)
       bigramSimilarityIndex.index(m.id, m.words)
       trigramSimilarityIndex.index(m.id, m.words)
@@ -288,6 +237,7 @@ object BFTApp extends ABFTAlign {
     hplAlignParams.setUniform_!
     hplAlignParams.labelAligns(hotelNameIndex).increment_!(alignFeatureIndexer.indexOf_?(_gte(FUZZY_JACCARD, 0.9)), 1.0)
     hplAlignParams.labelAligns(localAreaIndex).increment_!(alignFeatureIndexer.indexOf_?(_gte(FUZZY_JACCARD, 0.9)), 1.0)
+    hplAlignParams.labelAligns(localAreaIndex).increment_!(alignFeatureIndexer.indexOf_?(LOCALAREA_TRANSLATION), 1.0)
     hplAlignParams.labelAligns(starRatingIndex).increment_!(alignFeatureIndexer.indexOf_?(_gte(JACCARD, 1.0)), 1.0)
 
     val hplMentions = new ArrayBuffer[Mention]
