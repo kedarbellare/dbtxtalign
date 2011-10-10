@@ -148,6 +148,22 @@ trait AbstractAlign extends HasLogger {
 
   def getAlignFeatureVector(l: Int, id1: String, i1: Int, j1: Int, id2: String, i2: Int, j2: Int): FtrVec = new FtrVec
 
+  def getBIOFromSegmentation(segmentation: Segmentation): Seq[String] = {
+    val OTHER = labelIndexer(otherLabelIndex)
+    val bioLabels = Array.fill[String](segmentation.length)(OTHER)
+    forIndex(segmentation.numSegments, (i: Int) => {
+      val segment = segmentation.segment(i)
+      if (segment.label != otherLabelIndex) {
+        val LBL = labelIndexer(segment.label)
+        forIndex(segment.begin, segment.end, (k: Int) => {
+          bioLabels(k) = ("I-" + LBL)
+        })
+        bioLabels(segment.begin) = ("B-" + LBL)
+      }
+    })
+    bioLabels.toSeq
+  }
+
   def getSegmentation_!(m: Mention, indexer: Indexer[String]): Segmentation = {
     Segmentation.fromBIO(m.trueBioLabels, indexer.indexOf_!(_))
   }
@@ -258,7 +274,7 @@ trait AbstractAlign extends HasLogger {
 
   case class AlignResult(stats: ProbStats, counts: AlignParams) extends LearnMessage
 
-  case class AlignPerfResult(total: Int, tp: Int, fp: Int, fn: Int) extends LearnMessage
+  case class AlignPerfResult(total: Int, tp: Int, fp: Int, fn: Int, labeledMentions: Seq[Mention]) extends LearnMessage
 
   trait SegmentationWorker extends Actor {
     val stats = new ProbStats
@@ -299,7 +315,7 @@ trait AbstractAlign extends HasLogger {
 
   // 1. Segment HMM trained with EM
   class HMMWorker(val iter: Int, val params: SegmentParams, val unlabeledWeight: Double,
-                   val latch: CountDownLatch) extends SegmentationWorker {
+                  val latch: CountDownLatch) extends SegmentationWorker {
     val counts = newSegmentParams(true, true, labelIndexer, wordFeatureIndexer)
 
     def doInfer(m: Mention, stepSize: Double) {
@@ -463,6 +479,7 @@ trait AbstractAlign extends HasLogger {
     var tpMatches = 0
     var fpMatches = 0
     var fnMatches = 0
+    val hplMentions = new ArrayBuffer[Mention]
 
     def doAlignInfer(m: Mention, oms: Seq[Mention]) {
       val mclust = id2cluster.get(m.id)
@@ -492,10 +509,14 @@ trait AbstractAlign extends HasLogger {
         logger.info("id[" + ex.id + "]")
         logger.info("matchScore: " + inferencer.logVZ + " clusterMatch: " + isMatch)
         logger.info("recordWords: " + ex.otherWordsSeq.head.mkString(" "))
-        logger.info("recordSegmentation: " + ex.otherSegmentations.head)
+        logger.info("recordSegmentation: " + getBIOFromSegmentation(ex.otherSegmentations.head).mkString(" "))
         logger.info("words: " + ex.words.mkString(" "))
-        logger.info("matchSegmentation: " + inferencer.bestWidget)
-        logger.info("segmentation: " + ex.trueSegmentation)
+
+        // add high-precision labeled mention to list
+        val predBIOLabels = getBIOFromSegmentation(inferencer.bestWidget.segmentation)
+        logger.info("matchSegmentation: " + predBIOLabels.mkString(" "))
+        logger.info("truthSegmentation: " + getBIOFromSegmentation(ex.trueSegmentation).mkString(" "))
+        hplMentions += new Mention(m.id, m.isRecord, m.words, predBIOLabels)
       } else if (isMatch) fnMatches += 1
     }
 
@@ -505,7 +526,7 @@ trait AbstractAlign extends HasLogger {
           doAlignInfer(ms(i), aligns(i))
         })
       case FinishedMentions =>
-        self.channel ! AlignPerfResult(numMatches, tpMatches, fpMatches, fnMatches)
+        self.channel ! AlignPerfResult(numMatches, tpMatches, fpMatches, fnMatches, hplMentions)
         latch.countDown()
         self.stop()
     }
@@ -513,7 +534,7 @@ trait AbstractAlign extends HasLogger {
 
   def decodeMatchOnlySegmentation(mentions: Seq[Mention], otherMentions: Seq[Seq[Mention]],
                                   id2cluster: HashMap[String, String], params: AlignParams,
-                                  matchThreshold: Double) {
+                                  matchThreshold: Double): Seq[Mention] = {
     val latch = new CountDownLatch(numWorkers)
     val workers = Vector.fill(numWorkers)(
       actorOf(new ViterbiAlignmentMatchOnlyWorker(id2cluster, params, matchThreshold, latch)).start())
@@ -526,16 +547,19 @@ trait AbstractAlign extends HasLogger {
     var tp = 0
     var fp = 0
     var fn = 0
+    val hplMentions = new ArrayBuffer[Mention]
     for (worker <- workers) {
       for (result <- worker.!!(FinishedMentions, MAXTIME).as[AlignPerfResult]) {
         total += result.total
         tp += result.tp
         fp += result.fp
         fn += result.fn
+        hplMentions ++= result.labeledMentions
       }
     }
     latch.await()
-    logger.info("result[" + MAXTIME + "]: " + AlignPerfResult(total, tp, fp, fn))
+    logger.info("#matches=" + total + " #tpMatches=" + tp + " #fpMatches=" + fp + " #fnMatches=" + fn)
+    hplMentions
   }
 
   /*

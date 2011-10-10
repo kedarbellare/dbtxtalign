@@ -287,26 +287,11 @@ object BFTApp extends ABFTAlign {
     })
 
     // 4. WWT phase1 segment and learn from high-precision segmentations
-    /*
-        val hplExamples = getHighPrecisionLabeledExamples(fvecExamples, blocker, approxMatchers,
-          approxMatchThresholds, approxMatchThresholds.foldLeft(0.0)(_ + _), id2cluster)
-        var crfParams = newSegmentParams(false, true, labelIndexer, featureIndexer)
-        crfParams.setUniform_!
-        crfParams = learnSupervisedSegmentParamsCRF(50, hplExamples, crfParams, 1, 1)
-        // crfParams.output(logger.info(_))
-        decodeSegmentation("bft.crf.true.txt", "bft.crf.pred.txt", rawMentions, (m: Mention) => {
-          val ex = id2fvecExample(m.id)
-          val inferencer = new CRFSegmentationInferencer(labelIndexer, maxLengths, ex, crfParams, crfParams,
-            InferSpec(0, 1, false, false, true, false, false, true, 1, 0))
-          inferencer.bestWidget
-        })
-    */
-
-    val hplAlignParams1 = newAlignParams(false, true, labelIndexer, alignFeatureIndexer)
-    hplAlignParams1.setUniform_!
-    hplAlignParams1.labelAligns(hotelNameIndex).increment_!(alignFeatureIndexer.indexOf_?(_gte(FUZZY_JACCARD, 0.9)), 1.0)
-    hplAlignParams1.labelAligns(localAreaIndex).increment_!(alignFeatureIndexer.indexOf_?(_gte(FUZZY_JACCARD, 0.9)), 1.0)
-    hplAlignParams1.labelAligns(starRatingIndex).increment_!(alignFeatureIndexer.indexOf_?(_gte(JACCARD, 1.0)), 1.0)
+    val hplAlignParams = newAlignParams(false, true, labelIndexer, alignFeatureIndexer)
+    hplAlignParams.setUniform_!
+    hplAlignParams.labelAligns(hotelNameIndex).increment_!(alignFeatureIndexer.indexOf_?(_gte(FUZZY_JACCARD, 0.6)), 1.0)
+    hplAlignParams.labelAligns(localAreaIndex).increment_!(alignFeatureIndexer.indexOf_?(_gte(FUZZY_JACCARD, 0.6)), 1.0)
+    hplAlignParams.labelAligns(starRatingIndex).increment_!(alignFeatureIndexer.indexOf_?(_gte(JACCARD, 1.0)), 1.0)
 
     val hplMentions = new ArrayBuffer[Mention]
     val hplOtherMentions = new ArrayBuffer[Seq[Mention]]
@@ -316,60 +301,20 @@ object BFTApp extends ABFTAlign {
         hplOtherMentions += Seq(m2)
       }
     }
-    decodeMatchOnlySegmentation(hplMentions, hplOtherMentions, id2cluster, hplAlignParams1, 3.0)
+    val hplLabeledMentions = new ArrayBuffer[Mention]
+    hplLabeledMentions ++= rawMentions.filter(_.isRecord == true)
+    hplLabeledMentions ++= decodeMatchOnlySegmentation(hplMentions, hplOtherMentions, id2cluster, hplAlignParams, 3.0)
 
-/*
-    var numMatches = 0
-    var tpMatches = 0
-    var fpMatches = 0
-    var fnMatches = 0
-    var hplMatches = 0
-    for (m1 <- rawTexts) {
-      val clusterOpt1 = id2cluster.get(m1.id)
-      val ex1 = id2fvecExample(m1.id)
-      var numLocalMatches = 0
-      var localTpMatches = 0
-      for (m2 <- rawRecords if blocker.isPair(m1.id, m2.id)) {
-        val cluster2 = id2cluster(m2.id)
-        val ex2 = id2fvecExample(m2.id)
-        val isMatch = clusterOpt1.isDefined && clusterOpt1.get == cluster2
-        val trueMatchIds = new HashSet[String]
-        if (isMatch) {
-          trueMatchIds += ex2.id
-          numMatches += 1
-        }
-        val ex = new FeatVecAlignmentMentionExample(ex1.id, ex1.isRecord, ex1.words,
-          ex1.possibleEnds, ex1.featSeq, trueMatchIds, ex1.trueSegmentation, ex2.id, ex2.words, ex2.trueSegmentation)
-        val inferencer = new CRFMatchOnlySegmentationInferencer(labelIndexer, maxLengths, getAlignFeatureVector,
-          ex, hplAlignParams1, hplAlignParams1, InferSpec(0, 1, false, false, true, false, false, true, 1, 0),
-          false, false)
-        if (inferencer.logVZ >= 3.0) {
-          numLocalMatches += 1
-          if (isMatch) {
-            tpMatches += 1
-            localTpMatches += 1
-          }
-          else fpMatches += 1
-          logger.info("")
-          logger.info("id[" + ex.id + "]")
-          logger.info("matchScore: " + inferencer.logVZ + " clusterMatch: " + isMatch)
-          logger.info("recordWords: " + ex.otherWordsSeq.head.mkString(" "))
-          logger.info("recordSegmentation: " + ex.otherSegmentations.head)
-          logger.info("words: " + ex.words.mkString(" "))
-          logger.info("matchSegmentation: " + inferencer.bestWidget)
-          logger.info("segmentation: " + ex.trueSegmentation)
-        } else if (isMatch) {
-          fnMatches += 1
-        }
-      }
-      if (numLocalMatches == 1 && localTpMatches == 1) {
-        hplMatches += 1
-      }
-    }
-    logger.info("")
-    logger.info("#tpMatches=" + tpMatches + " #fpMatches=" + fpMatches +
-      " #fnMatches=" + fnMatches + " #hplMatches=" + hplMatches + " #matches=" + numMatches)
-*/
+    var crfParams = newSegmentParams(false, true, labelIndexer, featureIndexer)
+    crfParams.setUniform_!
+    crfParams = learnSupervisedSegmentParamsCRF(50, hplLabeledMentions, crfParams, 1, 1)
+    // crfParams.output(logger.info(_))
+    decodeSegmentation("bft.crf.true.txt", "bft.crf.pred.txt", rawMentions, (m: Mention) => {
+      val ex = id2fvecExample(m.id)
+      val inferencer = new CRFSegmentationInferencer(labelIndexer, maxLengths, ex, crfParams, crfParams,
+        InferSpec(0, 1, false, false, true, false, false, true, 1, 0))
+      inferencer.bestWidget
+    })
 
     // 5. Do alignment using gold-standard clusters
 
