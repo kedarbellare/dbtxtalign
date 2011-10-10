@@ -162,18 +162,19 @@ object RexaApp extends ARexaAlign {
 
     val id2mention = new HashMap[String, Mention]
     val id2fExample = new HashMap[String, FeatMentionExample]
+    val id2fvecExample = new HashMap[String, FeatVecMentionExample]
     var numMentions = 0
     val maxMentions = rawMentions.size
     for (m <- rawMentions) {
       id2mention(m.id) = m
       id2fExample(m.id) = toFeatExample(m)
+      id2fvecExample(m.id) = toFeatVecExample(m)
       numMentions += 1
       if (numMentions % 1000 == 0) logger.info("Processed " + numMentions + "/" + maxMentions)
     }
 
     val id2cluster = FileHelper.getMapping1to2(args(0))
     val cluster2ids = getClusterToIds(id2cluster)
-    val examples = id2fExample.values.toSeq
 
     // 1. calculate candidate pairs using author and title
     val blocker = getBlocker(cluster2ids)

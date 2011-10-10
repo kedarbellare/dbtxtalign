@@ -186,6 +186,23 @@ trait AbstractAlign extends HasLogger {
 
   def toFeatExample(m: Mention): FeatMentionExample
 
+  def toFeatVecAlignExample(m: Mention, oms: Seq[Mention], id2cluster: HashMap[String, String]) = {
+    val mclust = id2cluster.get(m.id)
+    val mex = toFeatVecExample(m)
+
+    val trueMatchIds = new HashSet[String]
+    if (mclust.isDefined)
+      oms.foreach(om => {
+        val omclust = id2cluster.get(om.id)
+        if (omclust.isDefined && omclust.get == mclust.get)
+          trueMatchIds += om.id
+      })
+
+    new FeatVecAlignmentMentionExample(m.id, m.isRecord, m.words, mex.possibleEnds,
+      mex.featSeq, trueMatchIds, mex.trueSegmentation, oms.map(_.id), oms.map(_.words),
+      oms.map(getSegmentation_!(_, labelIndexer)))
+  }
+
   def getClusterToIds(id2cluster: HashMap[String, String]): HashMap[String, Seq[String]] = {
     val cluster2ids = new HashMap[String, Seq[String]]
     for ((id, cluster) <- id2cluster)
@@ -482,27 +499,14 @@ trait AbstractAlign extends HasLogger {
     val hplMentions = new ArrayBuffer[Mention]
 
     def doAlignInfer(m: Mention, oms: Seq[Mention]) {
-      val mclust = id2cluster.get(m.id)
-      val mex = toFeatVecExample(m)
-
-      val trueMatchIds = new HashSet[String]
-      if (mclust.isDefined)
-        oms.foreach(om => {
-          val omclust = id2cluster.get(om.id)
-          if (omclust.isDefined && omclust.get == mclust.get)
-            trueMatchIds += om.id
-        })
-      if (trueMatchIds.size > 0) numMatches += 1
-
-      val ex = new FeatVecAlignmentMentionExample(m.id, m.isRecord, m.words, mex.possibleEnds,
-        mex.featSeq, trueMatchIds, mex.trueSegmentation, oms.map(_.id), oms.map(_.words),
-        oms.map(getSegmentation_!(_, labelIndexer)))
+      val ex = toFeatVecAlignExample(m, oms, id2cluster)
+      if (ex.trueMatchIds.size > 0) numMatches += 1
 
       val inferencer = new CRFMatchOnlySegmentationInferencer(labelIndexer, maxLengths, getAlignFeatureVector,
         ex, alignParams, alignParams, InferSpec(0, 1, false, false, true, false, false, true, 1, 0),
         false, false)
       val predMatchIds = inferencer.bestWidget.matchIds
-      val isMatch = predMatchIds.size > 0 && trueMatchIds(predMatchIds.head)
+      val isMatch = predMatchIds.size > 0 && ex.trueMatchIds(predMatchIds.head)
       if (inferencer.logVZ >= matchThreshold) {
         if (isMatch) tpMatches += 1 else fpMatches += 1
         logger.info("")

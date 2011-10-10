@@ -264,9 +264,6 @@ object BFTApp extends ABFTAlign {
       trigramSimilarityIndex.index(m.id, m.words)
     }
 
-    val fExamples = id2fExample.values.toSeq
-    val fvecExamples = id2fvecExample.values.toSeq
-
     // 1. Calculate candidate pairs using hotelname and localarea
     val blocker = getBlocker(cluster2ids)
 
@@ -289,8 +286,8 @@ object BFTApp extends ABFTAlign {
     // 4. WWT phase1 segment and learn from high-precision segmentations
     val hplAlignParams = newAlignParams(false, true, labelIndexer, alignFeatureIndexer)
     hplAlignParams.setUniform_!
-    hplAlignParams.labelAligns(hotelNameIndex).increment_!(alignFeatureIndexer.indexOf_?(_gte(FUZZY_JACCARD, 0.6)), 1.0)
-    hplAlignParams.labelAligns(localAreaIndex).increment_!(alignFeatureIndexer.indexOf_?(_gte(FUZZY_JACCARD, 0.6)), 1.0)
+    hplAlignParams.labelAligns(hotelNameIndex).increment_!(alignFeatureIndexer.indexOf_?(_gte(FUZZY_JACCARD, 0.9)), 1.0)
+    hplAlignParams.labelAligns(localAreaIndex).increment_!(alignFeatureIndexer.indexOf_?(_gte(FUZZY_JACCARD, 0.9)), 1.0)
     hplAlignParams.labelAligns(starRatingIndex).increment_!(alignFeatureIndexer.indexOf_?(_gte(JACCARD, 1.0)), 1.0)
 
     val hplMentions = new ArrayBuffer[Mention]
