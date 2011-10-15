@@ -5,8 +5,9 @@ import com.mongodb.casbah.Imports._
 import blocking.{AbstractBlocker, UnionIndexBlocker, InvertedIndexBlocker, PhraseHash}
 import mongo.KB
 import cc.refectorie.user.kedarb.dynprog.InferSpec
-import collection.mutable.{ArrayBuffer, HashMap}
 import cc.refectorie.user.kedarb.dynprog.types.{Indexer, FtrVec}
+import cc.refectorie.user.kedarb.dynprog.segment.Segmentation
+import collection.mutable.{HashSet, ArrayBuffer, HashMap}
 
 /**
  * @author kedar
@@ -191,6 +192,9 @@ object BFTApp extends ABFTAlign {
   val lowSimLocalAndMatchf = constraintFeatureIndexer.indexOf_!('lowSimilarityLocalAndMatch)
   // 4. I(not(star) && starPattern) <= 0.0
   val starPatternMismatchf = constraintFeatureIndexer.indexOf_!('starRatingAndNotMatchesPattern)
+  // lock constraint feature indexer and compute number of parameters
+  constraintFeatureIndexer.lock
+  val numConstraintParams = constraintFeatureIndexer.size
 
   def main(args: Array[String]) {
     val rawRecords = recordsColl.map(new Mention(_)).toArray
@@ -264,32 +268,36 @@ object BFTApp extends ABFTAlign {
     })
 
     // 5. Do alignment using gold-standard clusters
-
-    /*
     val alignFvecExamples = new ArrayBuffer[FeatVecAlignmentMentionExample]
     var maxDegree = 0
     for (m1 <- rawMentions) {
       val clustOpt1 = id2cluster.get(m1.id)
-      val ex = toFeatVecExample(m1)
+      val ex = id2fvecExample(m1.id)
       var degree = 0
-      for (m2 <- rawRecords if blocker.isPair(m1.id, m2.id) && m1.id != m2.id) {
+      val otherIds = new ArrayBuffer[String]
+      val otherWordsSeq = new ArrayBuffer[Seq[String]]
+      val otherSegmentations = new ArrayBuffer[Segmentation]
+      val matchIds = new HashSet[String]
+      for (m2 <- rawRecords if blocker.isPair(m1.id, m2.id)) {
         val clust2 = id2cluster(m2.id)
         val isMatch = clustOpt1.isDefined && clustOpt1.get == clust2
+        val oex = id2fvecExample(m2.id)
         degree += 1
-        alignFvecExamples += new FeatVecAlignmentMentionExample(ex.id, ex.isRecord, ex.words, ex.possibleEnds,
-          ex.featSeq, isMatch, ex.trueSegmentation, m2.id, m2.words, getSegmentation_!(m2, labelIndexer))
+        if (isMatch) matchIds += m2.id
+        otherIds += oex.id
+        otherWordsSeq += oex.words
+        otherSegmentations += oex.trueSegmentation
       }
+      alignFvecExamples += new FeatVecAlignmentMentionExample(ex.id, ex.isRecord, ex.words, ex.possibleEnds,
+        ex.featSeq, matchIds, ex.trueSegmentation, otherIds, otherWordsSeq, otherSegmentations)
       if (degree > maxDegree) maxDegree = degree
     }
-    logger.info("#alignExamples=" + alignFvecExamples.size +
-      " #alignMatchExamples=" + alignFvecExamples.filter(_.trueMatch == true).size +
-      " maxDegree=" + maxDegree)
+    logger.info("#alignExamples=" + alignFvecExamples.size + " maxDegree=" + maxDegree)
 
     var params = newParams(false, true, labelIndexer, featureIndexer, alignFeatureIndexer)
     params.setUniform_!
     // params = new Params(crfParams.transitions, crfParams.emissions, params.aligns)
-    params = learnSupervisedAlignParamsCRF(50, alignFvecExamples, params, alignFeaturizer, 1, 1)
+    params = learnSupervisedAlignParamsCRF(50, alignFvecExamples, params, 1, 1)
     params.output(logger.info(_))
-    */
   }
 }

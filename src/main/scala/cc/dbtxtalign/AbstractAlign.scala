@@ -416,8 +416,12 @@ trait AbstractAlign extends HasLogger {
       case FinishedMentions =>
         updateProgress(true)
         self.channel ! SegmentResult(stats, counts)
-        latch.countDown()
         self.stop()
+    }
+
+    override def postStop() {
+      super.postStop()
+      latch.countDown()
     }
   }
 
@@ -551,7 +555,7 @@ trait AbstractAlign extends HasLogger {
         val expectations = newSegmentParams(false, true, labelIndexer, featureIndexer)
         val stats = new ProbStats()
         workers.foreach(worker => {
-          for (result <- (worker ? FinishedMentions).as[SegmentResult]) {
+          for (result <- worker.!!(FinishedMentions, MAXTIME).as[SegmentResult]) {
             // get work from each worker
             stats += result.stats
             expectations.add_!(result.counts, 1)
@@ -622,8 +626,12 @@ trait AbstractAlign extends HasLogger {
         })
       case FinishedMentions =>
         self.channel ! AlignPerfResult(numMatches, tpMatches, fpMatches, fnMatches, hplMentions)
-        latch.countDown()
         self.stop()
+    }
+
+    override def postStop() {
+      super.postStop()
+      latch.countDown()
     }
   }
 
@@ -729,138 +737,124 @@ trait AbstractAlign extends HasLogger {
     phraseTranslateTableOut.close()
   }
 
-  /*
-  def getHighPrecisionLabeledExamples(fvecExamples: Seq[FeatVecMentionExample],
-                                      blocker: AbstractBlocker,
-                                      approxMatchers: Seq[(Seq[String], Seq[String]) => Double],
-                                      approxMatchThresholds: Seq[Double], approxSumMatchThreshold: Double,
-                                      id2cluster: HashMap[String, String]): Seq[FeatVecMentionExample] = {
-    val textExamples = (for (ex <- fvecExamples if !ex.isRecord) yield ex).toSeq
-    val recordExamples = (for (ex <- fvecExamples if ex.isRecord) yield ex).toSeq
-    var crfParams = newSegmentParams(false, true, labelIndexer, featureIndexer)
-    crfParams.setUniform_!
+  // 5. Supervised alignment learning
+  case class ProcessMatchExamples(exs: Seq[FeatVecAlignmentMentionExample]) extends LearnMessage
 
-    logger.info("=====================================================================================")
-    var numFoundMatch = 0
-    val hplExamples = new ArrayBuffer[FeatVecMentionExample]
-    hplExamples ++= recordExamples
-    for (ex1 <- textExamples) {
-      val clust1 = id2cluster.getOrElse(ex1.id, "NULL")
-      val matchedExamples = new ArrayBuffer[FeatVecMentionExample]
-      for (ex2 <- recordExamples if blocker.isPair(ex1.id, ex2.id)) {
-        val ex = new FeatVecMatchOnlyMentionExample(ex1.id, ex1.isRecord, ex1.words, ex1.possibleEnds, ex1.featSeq,
-          ex1.trueSegmentation, ex2.id, ex2.words, ex2.trueSegmentation)
-        val crfSegMatch = new CRFSegmentAndMatchWWT(labelIndexer, maxLengths, approxMatchers, approxMatchThresholds,
-          ex, crfParams, crfParams, InferSpec(0, 1, false, false, true, false, true, false, 1, 0))
-        if (crfSegMatch.logVZ >= approxSumMatchThreshold) {
-          logger.info("")
-          logger.info("matchScore: " + crfSegMatch.logVZ + " clusterMatch: " + (clust1 == id2cluster(ex2.id)))
-          logger.info("recordWords: " + ex2.words.mkString(" "))
-          logger.info("recordSegmentation: " + ex2.trueSegmentation)
-          logger.info("words: " + ex1.words.mkString(" "))
-          logger.info("matchSegmentation: " + crfSegMatch.bestWidget)
-          logger.info("segmentation: " + ex1.trueSegmentation)
-          matchedExamples += new FeatVecMentionExample(ex1.id, ex1.isRecord, ex1.words, ex1.possibleEnds,
-            ex1.featSeq, crfSegMatch.bestWidget)
-        }
-      }
+  case class SegmentMatchResult(stats: ProbStats, counts: Params) extends LearnMessage
 
-      if (matchedExamples.size == 1) {
-        logger.info("=====================================================================================")
-        hplExamples += matchedExamples(0)
-        numFoundMatch += 1
-      }
+  trait SegmentationMatchWorker extends Actor {
+    val stats = new ProbStats
+    var progress = 0
+
+    def iter: Int
+
+    def unlabeledWeight: Double
+
+    def params: Params
+
+    def counts: Params
+
+    def latch: CountDownLatch
+
+    def updateProgress(done: Boolean = false) {
+      progress += 1
+      if (progress % 100 == 0 || done) logger.info("Processed " + progress + " mentions")
     }
-    logger.info(numFoundMatch + "/" + textExamples.length)
 
-    hplExamples.toSeq
+    def doInfer(ex: FeatVecAlignmentMentionExample, stepSize: Double)
+
+    def receive = {
+      case ProcessMatchExamples(exs) =>
+        // perform expectation step on each mention
+        exs.foreach(ex => {
+          val stepSize = if (ex.isRecord) 1.0 else unlabeledWeight
+          doInfer(ex, stepSize)
+          updateProgress()
+        })
+      case FinishedMentions =>
+        updateProgress(true)
+        self.channel ! SegmentMatchResult(stats, counts)
+        self.stop()
+    }
+
+    override def postStop() {
+      super.postStop()
+      latch.countDown()
+    }
   }
 
-  def getHighPrecisionLabeledExamplesHMM(fvecExamples: Seq[FeatMentionExample],
-                                         blocker: AbstractBlocker,
-                                         approxMatchers: Seq[(Seq[String], Seq[String]) => Double],
-                                         approxMatchThresholds: Seq[Double], approxSumMatchThreshold: Double,
-                                         id2cluster: HashMap[String, String]): Seq[FeatMentionExample] = {
-    val textExamples = (for (ex <- fvecExamples if !ex.isRecord) yield ex).toSeq
-    val recordExamples = (for (ex <- fvecExamples if ex.isRecord) yield ex).toSeq
-    var hmmParams = newSegmentParams(true, true, labelIndexer, wordFeatureIndexer)
-    hmmParams.setUniform_!
+  class CRFConstraintsSegmentationMatchWorker(val iter: Int, val params: Params,
+                                              val unlabeledWeight: Double, val latch: CountDownLatch)
+    extends SegmentationMatchWorker {
+    val counts = newParams(false, true, labelIndexer, featureIndexer, alignFeatureIndexer)
 
-    logger.info("=====================================================================================")
-    var numFoundMatch = 0
-    val hplExamples = new ArrayBuffer[FeatMentionExample]
-    hplExamples ++= recordExamples
-    for (ex1 <- textExamples) {
-      val clust1 = id2cluster.getOrElse(ex1.id, "NULL")
-      val matchedExamples = new ArrayBuffer[FeatMentionExample]
-      for (ex2 <- recordExamples if blocker.isPair(ex1.id, ex2.id)) {
-        val ex = new FeatMatchOnlyMentionExample(ex1.id, ex1.isRecord, ex1.words, ex1.possibleEnds, ex1.featSeq,
-          ex1.trueSegmentation, ex2.id, ex2.words, ex2.trueSegmentation)
-        val hmmSegMatch = new HMMSegmentAndMatchWWT(labelIndexer, maxLengths, approxMatchers, approxMatchThresholds,
-          ex, hmmParams, hmmParams, InferSpec(0, 1, false, false, true, false, true, false, 1, 0))
-        if (hmmSegMatch.logVZ >= approxSumMatchThreshold) {
-          logger.info("")
-          logger.info("matchScore: " + hmmSegMatch.logVZ + " clusterMatch: " + (clust1 == id2cluster(ex2.id)))
-          logger.info("recordWords: " + ex2.words.mkString(" "))
-          logger.info("recordSegmentation: " + ex2.trueSegmentation)
-          logger.info("words: " + ex1.words.mkString(" "))
-          logger.info("matchSegmentation: " + hmmSegMatch.bestWidget)
-          logger.info("segmentation: " + ex1.trueSegmentation)
-          matchedExamples += new FeatMentionExample(ex1.id, ex1.isRecord, ex1.words, ex1.possibleEnds,
-            ex1.featSeq, hmmSegMatch.bestWidget)
-        }
-      }
-
-      if (matchedExamples.size == 1) {
-        logger.info("=====================================================================================")
-        hplExamples += matchedExamples(0)
-        numFoundMatch += 1
-      }
+    def doInfer(ex: FeatVecAlignmentMentionExample, stepSize: Double) {
+      new CRFMatchSegmentationInferencer(labelIndexer, maxLengths, getAlignFeatureVector, ex, params, counts,
+        InferSpec(0, 1, false, false, false, false, false, true, 1, stepSize),
+        true, true).updateCounts
     }
-    logger.info(numFoundMatch + "/" + textExamples.length)
-
-    hplExamples.toSeq
   }
 
-  // 3. Supervised alignment learning
+  class CRFExpectationsSegmentationMatchWorker(val iter: Int, val params: Params,
+                                               val unlabeledWeight: Double, val latch: CountDownLatch)
+    extends SegmentationMatchWorker {
+    val counts = newParams(false, true, labelIndexer, featureIndexer, alignFeatureIndexer)
+
+    def doInfer(ex: FeatVecAlignmentMentionExample, stepSize: Double) {
+      // constraints cost
+      val truthInfer = new CRFMatchSegmentationInferencer(labelIndexer, maxLengths, getAlignFeatureVector,
+        ex, params, counts, InferSpec(0, 1, false, false, false, false, false, true, 1, 0),
+        true, true)
+      // expectations
+      val predInfer = new CRFMatchSegmentationInferencer(labelIndexer, maxLengths, getAlignFeatureVector,
+        ex, params, counts, InferSpec(0, 1, false, false, false, false, false, true, 1, -stepSize),
+        false, false)
+      predInfer.updateCounts
+      stats += (truthInfer.stats - predInfer.stats) * stepSize
+    }
+  }
+
   def learnSupervisedAlignParamsCRF(numIter: Int, examples: Seq[FeatVecAlignmentMentionExample], params: Params,
-                                    alignFeaturizer: (Int, Seq[String], Seq[String]) => FtrVec,
                                     textWeight: Double, invVariance: Double): Params = {
     // calculate constraints once
-    val constraints = newParams(false, true, labelIndexer, featureIndexer, alignFeatureIndexer)
-    var numEx = 0
-    for (ex <- examples) {
-      val stepSize = if (ex.isRecord) 1.0 else textWeight
-      new CRFMatchSegmentationInferencer(labelIndexer, alignFeatureIndexer, maxLengths, ex, params, constraints,
-        InferSpec(0, 1, false, false, false, false, false, true, 1, stepSize),
-        true, true, alignFeaturizer).updateCounts
-      numEx += 1
-      if (numEx % 1000 == 0) logger.info("Processed [constraints] " + numEx + "/" + examples.size + " examples ...")
+    val constraintLatch = new CountDownLatch(numWorkers)
+    val constraintWorkers = Vector.fill(numWorkers)(
+      actorOf(new CRFConstraintsSegmentationMatchWorker(0, params, textWeight, constraintLatch)).start())
+    for (b <- 0 until numBatches(examples.size)) {
+      constraintWorkers(b % numWorkers) ! ProcessMatchExamples(examples.slice(b * batchSize, (b + 1) * batchSize))
     }
+
+    val constraints = newParams(false, true, labelIndexer, featureIndexer, alignFeatureIndexer)
+    constraintWorkers.foreach(worker => {
+      for (result <- worker.!!(FinishedMentions, MAXTIME).as[SegmentMatchResult]) {
+        // get work from each worker
+        constraints.add_!(result.counts, 1)
+      }
+    })
+    constraintLatch.await()
     // constraints.output(logger.info(_))
 
     val objective = new ACRFObjective[Params](params, invVariance) {
       def logger = Logger.getLogger("supervised-crf-align-trainer")
 
       def getValueAndGradient = {
+        val expectationLatch = new CountDownLatch(numWorkers)
+        val workers = Vector.fill(numWorkers)(
+          actorOf(new CRFExpectationsSegmentationMatchWorker(0, params, textWeight, expectationLatch)).start())
+        for (b <- 0 until numBatches(examples.size)) {
+          workers(b % numWorkers) ! ProcessMatchExamples(examples.slice(b * batchSize, (b + 1) * batchSize))
+        }
+
         val expectations = newParams(false, true, labelIndexer, featureIndexer, alignFeatureIndexer)
         val stats = new ProbStats()
-        var numEx = 0
-        for (ex <- examples) {
-          val stepSize = if (ex.isRecord) 1.0 else textWeight
-          // constraints cost
-          val truthInfer = new CRFMatchSegmentationInferencer(labelIndexer, alignFeatureIndexer, maxLengths,
-            ex, params, constraints, InferSpec(0, 1, false, false, false, false, false, true, 1, 0),
-            true, true, alignFeaturizer)
-          // expectations
-          val predInfer = new CRFMatchSegmentationInferencer(labelIndexer, alignFeatureIndexer, maxLengths,
-            ex, params, expectations, InferSpec(0, 1, false, false, false, false, false, true, 1, -stepSize),
-            false, false, alignFeaturizer)
-          predInfer.updateCounts
-          stats += (truthInfer.stats - predInfer.stats) * stepSize
-          numEx += 1
-          if (numEx % 1000 == 0) logger.info("Processed [expectations] " + numEx + "/" + examples.size + " examples ...")
-        }
+        workers.foreach(worker => {
+          for (result <- worker.!!(FinishedMentions, MAXTIME).as[SegmentMatchResult]) {
+            // get work from each worker
+            stats += result.stats
+            expectations.add_!(result.counts, 1)
+          }
+        })
+        expectationLatch.await()
         expectations.add_!(constraints, 1)
         (expectations, stats)
       }
@@ -881,5 +875,4 @@ trait AbstractAlign extends HasLogger {
 
     params
   }
-  */
 }
