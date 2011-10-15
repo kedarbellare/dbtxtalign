@@ -9,6 +9,10 @@ import cc.refectorie.user.kedarb.dynprog.utils.Utils._
  * @since 5/10/11
  */
 
+object MyParamUtils {
+  def myfmt(v: Double) = "%.3f".format(v)
+}
+
 class TransitionParams(val labelIndexer: Indexer[String],
                        val starts: ParamVec,
                        val transitions: Array[ParamVec]) extends AParams {
@@ -18,16 +22,17 @@ class TransitionParams(val labelIndexer: Indexer[String],
   }
 
   def output(puts: (String) => Any): Unit = {
+    import MyParamUtils._
     puts("")
     foreachIndex(getValues(starts), {
-      (a: Int, v: Double) => if (v != 0) puts("S\t%s\t%s".format(labelIndexer(a), fmt(v)))
+      (a: Int, v: Double) => if (v != 0) puts("S\t%s\t%s".format(labelIndexer(a), myfmt(v)))
     })
     foreachIndex(transitions, {
       (a: Int, pv: ParamVec) =>
         puts("")
         foreachSortedIndex(getValues(pv), {
           (b: Int, v: Double) =>
-            if (v != 0) puts("T\t%s\t%s\t%s".format(labelIndexer(a), labelIndexer(b), fmt(v)))
+            if (v != 0) puts("T\t%s\t%s\t%s".format(labelIndexer(a), labelIndexer(b), myfmt(v)))
         })
     })
   }
@@ -41,12 +46,13 @@ class EmissionParams(val labelIndexer: Indexer[String],
   }
 
   def output(puts: (String) => Any): Unit = {
+    import MyParamUtils._
     foreachIndex(emissions, {
       (a: Int, pv: ParamVec) =>
         puts("")
         foreachSortedIndex(getValues(pv), {
           (i: Int, v: Double) =>
-            if (v != 0) puts("E\t%s\t%s\t%s".format(labelIndexer(a), featureIndexer(i), fmt(v)))
+            if (v != 0) puts("E\t%s\t%s\t%s".format(labelIndexer(a), featureIndexer(i), myfmt(v)))
         })
     })
   }
@@ -60,12 +66,13 @@ class AlignParams(val labelIndexer: Indexer[String],
   }
 
   def output(puts: (String) => Any) {
+    import MyParamUtils._
     foreachIndex(labelAligns, {
       (a: Int, pv: ParamVec) =>
         puts("")
         foreachSortedIndex(getValues(pv), {
           (i: Int, v: Double) =>
-            if (v != 0) puts("A\t%s\t%s\t%s".format(labelIndexer(a), alignFeatureIndexer(i), fmt(v)))
+            if (v != 0) puts("A\t%s\t%s\t%s".format(labelIndexer(a), alignFeatureIndexer(i), myfmt(v)))
         })
     })
   }
@@ -100,6 +107,22 @@ class Params(val transitions: TransitionParams, val emissions: EmissionParams, v
   def getSegmentParams: SegmentParams = new SegmentParams(transitions, emissions)
 
   def getAlignParams: AlignParams = aligns
+}
+
+class ConstraintParams(val constraintFeatureIndexer: Indexer[String],
+                       val constraints: ParamVec) extends AParams {
+  def foreachVec(f: (ParamVec) => Any) {
+    f(constraints)
+  }
+
+  def output(puts: (String) => Any) {
+    import MyParamUtils._
+    puts("")
+    foreachSortedIndex(getValues(constraints), {
+      (i: Int, v: Double) =>
+        if (v != 0) puts("C\t%s\t%s".format(constraintFeatureIndexer(i), myfmt(v)))
+    })
+  }
 }
 
 class NoopParams extends AParams {

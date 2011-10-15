@@ -1,6 +1,6 @@
 package cc.dbtxtalign
 
-import optimization.gradientBasedMethods.Objective
+import optimization.gradientBasedMethods.ProjectedObjective
 import cc.refectorie.user.kedarb.dynprog.la.ArrayFromVectors
 import cc.refectorie.user.kedarb.dynprog.{ProbStats, AParams}
 import org.apache.log4j.Logger
@@ -9,7 +9,7 @@ import org.apache.log4j.Logger
  * @author kedar
  */
 
-abstract class ACRFObjective[Params <: AParams](params: Params, invVariance: Double) extends Objective {
+abstract class ACRFObjective[Params <: AParams](params: Params, invVariance: Double) extends ProjectedObjective {
   val paramsArrayFromVectors = new ArrayFromVectors(params.getWtVecs)
   var objectiveValue = Double.NaN
 
@@ -74,6 +74,8 @@ abstract class ACRFObjective[Params <: AParams](params: Params, invVariance: Dou
     }
     gradient
   }
+
+  def projectPoint(point: Array[Double]): Array[Double] = point
 
   override def toString = "objective = " + objectiveValue
 }

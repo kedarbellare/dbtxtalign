@@ -5,21 +5,22 @@ import collection.mutable.{HashSet, ArrayBuffer, HashMap}
 import fastsim.SimilarityIndex
 import java.io.PrintWriter
 import org.apache.log4j.Logger
-import cc.refectorie.user.kedarb.dynprog.types.{ParamUtils, FtrVec, Indexer}
 import cc.refectorie.user.kedarb.dynprog.utils.Utils._
 import cc.refectorie.user.kedarb.dynprog.segment._
 import cc.refectorie.user.kedarb.dynprog.{ProbStats, InferSpec}
-import optimization.linesearch.ArmijoLineSearchMinimization
 import optimization.gradientBasedMethods.stats.OptimizerStats
-import optimization.gradientBasedMethods.{Objective, Optimizer, LBFGS}
 import params._
 import optimization.stopCriteria.AverageValueDifference
 import org.riedelcastro.nurupo.HasLogger
 import akka.actor.Actor
 import akka.actor.Actor._
 import akka.util.duration._
-import java.util.concurrent.CountDownLatch
 import phrasematch.ObjectStringScorer
+import cc.refectorie.user.kedarb.dynprog.types.{ParamUtils, FtrVec, Indexer}
+import optimization.projections.BoundsProjection
+import optimization.linesearch.{InterpolationPickFirstStep, ArmijoLineSearchMinimizationAlongProjectionArc, ArmijoLineSearchMinimization}
+import optimization.gradientBasedMethods.{ProjectedGradientDescent, Objective, Optimizer, LBFGS}
+import java.util.concurrent.CountDownLatch
 
 /**
  * @author kedar
@@ -32,8 +33,13 @@ trait AbstractAlign extends HasLogger {
   val wordFeatureIndexer = new Indexer[String]
   val featureIndexer = new Indexer[String]
   val alignFeatureIndexer = new Indexer[String]
+  val constraintFeatureIndexer = new Indexer[String]
+
   val maxLengths = new ArrayBuffer[Int]
+
   val otherLabelIndex = labelIndexer.indexOf_!("O")
+
+  val positiveProjection = new BoundsProjection(0, Double.PositiveInfinity)
 
   val token2WordIndices = new HashMap[String, Seq[Int]]
   val tokenSimilarityIndex = new SimilarityIndex(s => ObjectStringScorer.getTokens(Seq(s)))
@@ -101,6 +107,8 @@ trait AbstractAlign extends HasLogger {
   def F = featureIndexer.size
 
   def AF = alignFeatureIndexer.size
+
+  def CF = constraintFeatureIndexer.size
 
   def numWorkers = DBAlignConfig.get[Int]("numThreads", 2)
 
@@ -200,6 +208,9 @@ trait AbstractAlign extends HasLogger {
       (ws: Seq[String], i: Int) => featurizer(ws, i).map(indexer.indexOf_?(_))
     })
   }
+
+  def featureVectorContains(fv: FtrVec, index: Int): Boolean =
+    fv.exists(keyval => keyval._1 == index && keyval._2 != 0.0)
 
   def getAlignFeatureVector(l: Int, id1: String, i1: Int, j1: Int, id2: String, i2: Int, j2: Int): FtrVec = {
     val fv = new FtrVec
@@ -363,6 +374,14 @@ trait AbstractAlign extends HasLogger {
       new TransitionParams(labelIndexer, starts, transitions),
       new EmissionParams(labelIndexer, featureIndexer, emissions),
       new AlignParams(labelIndexer, alignFeatureIndexer, aligns))
+  }
+
+  def newConstraintParams(isProb: Boolean, isDense: Boolean,
+                          constraintFeatureIndexer: Indexer[String]): ConstraintParams = {
+    import ParamUtils._
+    val CF = constraintFeatureIndexer.size
+    val constraints = if (isProb) newPrVec(isDense, CF) else newWtVec(isDense, CF)
+    new ConstraintParams(constraintFeatureIndexer, constraints)
   }
 
   // Learning functions
@@ -542,7 +561,7 @@ trait AbstractAlign extends HasLogger {
     constraintLatch.await()
 
     val objective = new ACRFObjective[SegmentParams](params, invVariance) {
-      def logger = Logger.getLogger("high-precision-crf-trainer")
+      val logger = Logger.getLogger("high-precision-crf-trainer")
 
       def getValueAndGradient = {
         val expectationLatch = new CountDownLatch(numWorkers)
@@ -742,6 +761,8 @@ trait AbstractAlign extends HasLogger {
 
   case class SegmentMatchResult(stats: ProbStats, counts: Params) extends LearnMessage
 
+  case class SegmentMatchSemiSupResult(stats: ProbStats, counts: ConstraintParams) extends LearnMessage
+
   trait SegmentationMatchWorker extends Actor {
     val stats = new ProbStats
     var progress = 0
@@ -835,7 +856,7 @@ trait AbstractAlign extends HasLogger {
     // constraints.output(logger.info(_))
 
     val objective = new ACRFObjective[Params](params, invVariance) {
-      def logger = Logger.getLogger("supervised-crf-align-trainer")
+      val logger = Logger.getLogger("supervised-crf-align-trainer")
 
       def getValueAndGradient = {
         val expectationLatch = new CountDownLatch(numWorkers)
@@ -868,6 +889,221 @@ trait AbstractAlign extends HasLogger {
       override def collectIterationStats(optimizer: Optimizer, objective: Objective) {
         super.collectIterationStats(optimizer, objective)
         logger.info("*** finished alignment+segmentation learning only epoch=" + (optimizer.getCurrentIteration + 1))
+      }
+    }
+    optimizer.setMaxIterations(numIter)
+    optimizer.optimize(objective, stats, stop)
+
+    params
+  }
+
+  def newConstraintMatchInferencer(ex: FeatVecAlignmentMentionExample, params: Params, counts: Params,
+                                   constraintParams: ConstraintParams, constraintCounts: ConstraintParams,
+                                   ispec: InferSpec, doUpdate: Boolean): CRFMatchSegmentationInferencer = {
+    throw fail("Not implemented!!")
+  }
+
+  // 6. Semi-supervised parameter learning
+  trait SemiSupSegmentationMatchWorker extends Actor {
+    val stats = new ProbStats
+    var progress = 0
+
+    def iter: Int
+
+    def unlabeledWeight: Double
+
+    def constraintParams: ConstraintParams
+
+    def constraintCounts: ConstraintParams
+
+    def params: Params
+
+    def latch: CountDownLatch
+
+    def updateProgress(done: Boolean = false) {
+      progress += 1
+      if (progress % 100 == 0 || done) logger.info("Processed " + progress + " mentions")
+    }
+
+    def doInfer(ex: FeatVecAlignmentMentionExample, stepSize: Double)
+
+    def receive = {
+      case ProcessMatchExamples(exs) =>
+        // perform expectation step on each mention
+        exs.foreach(ex => {
+          val stepSize = if (ex.isRecord) 1.0 else unlabeledWeight
+          doInfer(ex, stepSize)
+          updateProgress()
+        })
+      case FinishedMentions =>
+        updateProgress(true)
+        self.channel ! SegmentMatchSemiSupResult(stats, constraintCounts)
+        self.stop()
+    }
+
+    override def postStop() {
+      super.postStop()
+      latch.countDown()
+    }
+  }
+
+  class CRFSemiSupSegmentationMatchWorker(val iter: Int, val constraintParams: ConstraintParams,
+                                          val params: Params, val latch: CountDownLatch)
+    extends SemiSupSegmentationMatchWorker {
+    val unlabeledWeight: Double = 1.0
+    val constraintCounts = newConstraintParams(false, true, constraintFeatureIndexer)
+
+    def doInfer(ex: FeatVecAlignmentMentionExample, stepSize: Double) {
+      val predInfer = newConstraintMatchInferencer(ex, params, params, constraintParams, constraintCounts,
+        InferSpec(0, 1, false, ex.isRecord, false, false, false, true, 1, -stepSize), false)
+      predInfer.updateCounts
+      stats -= predInfer.stats
+    }
+  }
+
+  def learnSemiSupervisedConstraintParamsCRF(numIter: Int, examples: Seq[FeatVecAlignmentMentionExample],
+                                             params: Params, constraintParams: ConstraintParams,
+                                             defaultConstraintCounts: ConstraintParams,
+                                             invConstraintVariance: Double): ConstraintParams = {
+    val objective = new ACRFObjective[ConstraintParams](constraintParams, invConstraintVariance) {
+      val logger = Logger.getLogger("semi-supervised-constraint-param-trainer")
+
+      override def projectPoint(point: Array[Double]): Array[Double] = {
+        positiveProjection.project(point)
+        point
+      }
+
+      def getValueAndGradient: (ConstraintParams, ProbStats) = {
+        val latch = new CountDownLatch(numWorkers)
+        val workers = Vector.fill(numWorkers)(
+          actorOf(new CRFSemiSupSegmentationMatchWorker(0, constraintParams, params, latch)).start())
+        for (b <- 0 until numBatches(examples.size)) {
+          workers(b % numWorkers) ! ProcessMatchExamples(examples.slice(b * batchSize, (b + 1) * batchSize))
+        }
+
+        val constraintExpectations = newConstraintParams(false, true, constraintFeatureIndexer)
+        val stats = new ProbStats()
+        // objective = b*lambda + log Z(lambda) + eps/2 * ||lambda||^2
+        workers.foreach(worker => {
+          for (result <- worker.!!(FinishedMentions, MAXTIME).as[SegmentMatchSemiSupResult]) {
+            // get work from each worker
+            stats += result.stats
+            constraintExpectations.add_!(result.counts, 1)
+          }
+        })
+        latch.await()
+        stats.logZ -= constraintParams.getWts(0).dot(defaultConstraintCounts.getWtVecs(0))
+        constraintExpectations.add_!(defaultConstraintCounts, -1)
+        (constraintExpectations, stats)
+      }
+    }
+
+    val ls = new ArmijoLineSearchMinimizationAlongProjectionArc(new InterpolationPickFirstStep(1))
+    val stop = new AverageValueDifference(1e-3)
+    val optimizer = new ProjectedGradientDescent(ls)
+    val stats = new OptimizerStats {
+      override def collectIterationStats(optimizer: Optimizer, objective: Objective) {
+        super.collectIterationStats(optimizer, objective)
+        logger.info("*** finished constraint alignment+segmentation learning only epoch=" +
+          (optimizer.getCurrentIteration + 1))
+      }
+    }
+    optimizer.setMaxIterations(numIter)
+    optimizer.optimize(objective, stats, stop)
+
+    constraintParams
+  }
+
+  class CRFSemiSupConstraintsSegmentationMatchWorker(val iter: Int, val params: Params,
+                                                     val constraintParams: ConstraintParams,
+                                                     val latch: CountDownLatch)
+    extends SegmentationMatchWorker {
+    val unlabeledWeight: Double = 1.0
+    val counts = newParams(false, true, labelIndexer, featureIndexer, alignFeatureIndexer)
+    val constraintCounts = newConstraintParams(false, true, constraintFeatureIndexer)
+
+    def doInfer(ex: FeatVecAlignmentMentionExample, stepSize: Double) {
+      newConstraintMatchInferencer(ex, params, counts, constraintParams, constraintCounts,
+        InferSpec(0, 1, false, ex.isRecord, false, false, false, true, 1, 1), true).updateCounts
+    }
+  }
+
+  class CRFSemiSupExpectationsSegmentationMatchWorker(val iter: Int, val params: Params,
+                                                      val constraintParams: ConstraintParams,
+                                                      val latch: CountDownLatch)
+    extends SegmentationMatchWorker {
+    val unlabeledWeight: Double = 1.0
+    val counts = newParams(false, true, labelIndexer, featureIndexer, alignFeatureIndexer)
+    val constraintCounts = newConstraintParams(false, true, constraintFeatureIndexer)
+
+    def doInfer(ex: FeatVecAlignmentMentionExample, stepSize: Double) {
+      val truthInfer = newConstraintMatchInferencer(ex, params, params, constraintParams, constraintCounts,
+        InferSpec(0, 1, false, ex.isRecord, false, false, false, true, 1, 0), false)
+      // expectations
+      val predInfer = new CRFMatchSegmentationInferencer(labelIndexer, maxLengths, getAlignFeatureVector,
+        ex, params, counts, InferSpec(0, 1, false, false, false, false, false, true, 1, -stepSize),
+        false, false)
+      predInfer.updateCounts
+      stats += (truthInfer.stats - predInfer.stats) * stepSize
+    }
+  }
+
+  def learnSemiSupervisedAlignParamsCRF(numIter: Int, examples: Seq[FeatVecAlignmentMentionExample],
+                                   params: Params, constraintParams: ConstraintParams,
+                                   invVariance: Double): Params = {
+    // calculate constraints once
+    val constraintLatch = new CountDownLatch(numWorkers)
+    val constraintWorkers = Vector.fill(numWorkers)(
+      actorOf(new CRFSemiSupConstraintsSegmentationMatchWorker(0, params, constraintParams, constraintLatch)).start())
+    for (b <- 0 until numBatches(examples.size)) {
+      constraintWorkers(b % numWorkers) ! ProcessMatchExamples(examples.slice(b * batchSize, (b + 1) * batchSize))
+    }
+
+    val constraints = newParams(false, true, labelIndexer, featureIndexer, alignFeatureIndexer)
+    constraintWorkers.foreach(worker => {
+      for (result <- worker.!!(FinishedMentions, MAXTIME).as[SegmentMatchResult]) {
+        // get work from each worker
+        constraints.add_!(result.counts, 1)
+      }
+    })
+    constraintLatch.await()
+
+    val objective = new ACRFObjective[Params](params, invVariance) {
+      val logger = Logger.getLogger("semi-supervised-crf-param-trainer")
+
+      def getValueAndGradient: (Params, ProbStats) = {
+        val expectationLatch = new CountDownLatch(numWorkers)
+        val workers = Vector.fill(numWorkers)(
+          actorOf(new CRFSemiSupExpectationsSegmentationMatchWorker(0, params, constraintParams,
+            expectationLatch)).start())
+        for (b <- 0 until numBatches(examples.size)) {
+          workers(b % numWorkers) ! ProcessMatchExamples(examples.slice(b * batchSize, (b + 1) * batchSize))
+        }
+
+        val expectations = newParams(false, true, labelIndexer, featureIndexer, alignFeatureIndexer)
+        val stats = new ProbStats()
+        workers.foreach(worker => {
+          for (result <- worker.!!(FinishedMentions, MAXTIME).as[SegmentMatchResult]) {
+            // get work from each worker
+            stats += result.stats
+            expectations.add_!(result.counts, 1)
+          }
+        })
+        expectationLatch.await()
+        expectations.add_!(constraints, 1)
+        (expectations, stats)
+      }
+    }
+
+    // optimize
+    val ls = new ArmijoLineSearchMinimization
+    val stop = new AverageValueDifference(1e-3)
+    val optimizer = new LBFGS(ls, 4)
+    val stats = new OptimizerStats {
+      override def collectIterationStats(optimizer: Optimizer, objective: Objective) {
+        super.collectIterationStats(optimizer, objective)
+        logger.info("*** finished semi-supervised alignment+segmentation learning only epoch=" +
+          (optimizer.getCurrentIteration + 1))
       }
     }
     optimizer.setMaxIterations(numIter)
