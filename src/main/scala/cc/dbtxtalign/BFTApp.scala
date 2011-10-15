@@ -164,35 +164,128 @@ object BFTApp extends ABFTAlign {
 
   val localareaTranslationf = alignFeatureIndexer.indexOf_!("LOCAL_AREA_TRANSLATION")
   val highSimFuzzyJaccardf = alignFeatureIndexer.indexOf_!(_gte(FUZZY_JACCARD, 0.9))
+  val highSimFuzzyJaccardContainsf = alignFeatureIndexer.indexOf_!(_gte(FUZZY_JACCARD_CONTAINS, 0.9))
   val lowSimFuzzyJaccardf = alignFeatureIndexer.indexOf_!(_lt(FUZZY_JACCARD, 0.2))
   val exactSimJaccardf = alignFeatureIndexer.indexOf_!(_gte(JACCARD, 1.0))
   val starPatternf = featureIndexer.indexOf_!("CONTAINS_STAR_PATTERN")
 
-  override def getAlignFeatureVector(l: Int, id1: String, i1: Int, j1: Int,
-                                     id2: String, i2: Int, j2: Int): FtrVec = {
-    val fv = super.getAlignFeatureVector(l, id1, i1, j1, id2, i2, j2)
-    if (l == localAreaIndex && j1 - i1 == 1 && j2 - i2 <= 2) {
+  private def isLocalAreaTranslation(id1: String, i1: Int, j1: Int, id2: String, i2: Int, j2: Int): Boolean = {
+    if (j1 - i1 == 1 && j2 - i2 <= 2) {
       val windex1 = token2WordIndices(id1)(i1)
       if (windex1 == word_dt_index || windex1 == word_mv_index || windex1 == word_ap_index) {
         val windices2 = token2WordIndices(id2).slice(i2, j2).toSeq
         if ((windices2 == word_downtown_indices && windex1 == word_dt_index) ||
           (windices2 == word_mission_valley_indices && windex1 == word_mv_index) ||
           (windices2 == word_airport_pit_indices && windex1 == word_ap_index)) {
-          // logger.info("translation found: " + windices2.map(wordIndexer(_)).mkString(" ") + " -> " + wordIndexer(windex1))
-          fv += localareaTranslationf -> 1.0
+          return true
         }
       }
+    }
+    false
+  }
+
+  override def getAlignFeatureVector(l: Int, id1: String, i1: Int, j1: Int,
+                                     id2: String, i2: Int, j2: Int): FtrVec = {
+    val fv = super.getAlignFeatureVector(l, id1, i1, j1, id2, i2, j2)
+    if (l == localAreaIndex && isLocalAreaTranslation(id1, i1, j1, id2, i2, j2)) {
+      fv += localareaTranslationf -> 1.0
     }
     fv
   }
 
   // Constraint features
-  // 1. I(hotel >=_{fuzzy_jacc} 0.9) + I(local >=_{fuzzy_jacc} 0.9 || local is translation) - I(match) <= 1.0
-  val highSimImpliesMatchf = constraintFeatureIndexer.indexOf_!("highSimilarityImpliesMatch")
-  // 2. I(sim <_{fuzzy_jacc} 0.2)<= 0.1
+  // #localAreaSegments <= 0.9 * 1 + 0.1 * 2
+  val countLocalAreaf = constraintFeatureIndexer.indexOf_!("countLocalArea")
+  // #hotelNameSegments <= 0.9 * 1 + 0.1 * 2
+  val countHotelNamef = constraintFeatureIndexer.indexOf_!("countHotelName")
+  // #starRatingSegments <= 1
+  val countStarRatingf = constraintFeatureIndexer.indexOf_!("countStarRating")
+  // I(hotelname >=_{fuzzy_jacc} 0.9) >= 0.99 * C(hotelname >=_{fuzzy_jacc} 0.9)
+  val highSimHotelImpliesMatchf = constraintFeatureIndexer.indexOf_!("highSimHotelImpliesMatch")
+  // I(localarea >=_{fuzzy_jacc} 0.9) >= 0.99 * C(hotelname >=_{fuzzy_jacc} 0.9)
+  val highSimLocalImpliesMatchf = constraintFeatureIndexer.indexOf_!("highSimLocalImpliesMatch")
+  // I(sim >=_{fuzzy_jacc_contains) 0.9) or I(localarea_translation) >= 0.9 C(sim >=_{fuzzy_jacc_contains) 0.9)
+  val highSimContainsImpliesMatchf = constraintFeatureIndexer.indexOf_!("highSimContainsImpliesMatch")
+  // I(localarea_translation) >= 0.99 * C(localarea_translation)
+  val localAreaTranslationMatchf = constraintFeatureIndexer.indexOf_!("localAreaTranslationImpliesMatch")
+  // I(sim <_{fuzzy_jacc} 0.2) <= 0.1
   val lowSimAndMatchf = constraintFeatureIndexer.indexOf_!("lowSimilarityAndMatch")
-  // 3. I(not(star) && starPattern) <= 0.0
+  // I(not(starrating) && starPattern) <= 0.01 * C(starPattern)
   val starPatternMismatchf = constraintFeatureIndexer.indexOf_!("starRatingAndNotMatchesPattern")
+
+
+  override def newDefaultConstraintMatchInferencer(ex: FeatVecAlignmentMentionExample, params: Params, counts: Params,
+                                                   constraintParams: ConstraintParams, constraintCounts: ConstraintParams,
+                                                   ispec: InferSpec): CRFMatchSegmentationInferencer = {
+    val alreadyUpdated = new HashSet[String]
+    constraintCounts.constraints.increment_!(countStarRatingf, 1.0)
+    constraintCounts.constraints.increment_!(countLocalAreaf, 1.0)
+    constraintCounts.constraints.increment_!(countHotelNamef, 1.0)
+
+    def setIfNotUpdated(fname: String, f: Int, v: Double) {
+      if (!alreadyUpdated.contains(fname)) {
+        constraintCounts.constraints.increment_!(f, v)
+        alreadyUpdated += fname
+      }
+    }
+
+    new CRFMatchSegmentationInferencer(labelIndexer, maxLengths, getAlignFeatureVector, ex,
+      params, counts, ispec, false, false) {
+      override def scoreMatch(otherIndex: Int): Double = 0.0
+
+      override def updateMatch(otherIndex: Int, v: Double) {}
+
+      override def scoreEmission(a: Int, i: Int, j: Int): Double = 0.0
+
+      override def updateEmission(a: Int, i: Int, j: Int, x: Double) {
+        if (j - i == 1 && featureVectorContains(featSeq(i), starPatternf) && a != starRatingIndex)
+          setIfNotUpdated("starPattern", starPatternMismatchf, 0.01)
+      }
+
+      override def scoreSingleEmission(a: Int, k: Int) = 0.0
+
+      override def updateSingleEmissionCached(a: Int, k: Int, x: Double) {}
+
+      override def scoreSimilarity(otherIndex: Int, a: Int, i: Int, j: Int, oi: Int, oj: Int) = 0.0
+
+      override def updateSimilarity(otherIndex: Int, a: Int, i: Int, j: Int, oi: Int, oj: Int, v: Double) {
+        val fuzzyJaccMatchSim = tokenSimilarityIndex.approxJaccardScorer(ex.id, i, j, otherIds(otherIndex), oi, oj,
+          approxTokenMatcher(_, _))
+        val highFuzzyJaccMatch = fuzzyJaccMatchSim >= 0.9
+        val lowFuzzyJaccMatch = fuzzyJaccMatchSim < 0.2
+        val isLocalTranslation = isLocalAreaTranslation(ex.id, i, j, otherIds(otherIndex), oi, oj)
+        if (a == hotelNameIndex && highFuzzyJaccMatch)
+          setIfNotUpdated("highFuzzyJaccHotel@[" + i + "," + j + "]", highSimHotelImpliesMatchf, -0.99)
+        if (a == localAreaIndex && highFuzzyJaccMatch)
+          setIfNotUpdated("highFuzzyJaccLocal@[" + i + "," + j + "]", highSimLocalImpliesMatchf, -0.99)
+        if (a == localAreaIndex && isLocalTranslation)
+          setIfNotUpdated("translationLocal@[" + i + "," + j + "]", localAreaTranslationMatchf, -0.99)
+        if (a == localAreaIndex || a == hotelNameIndex) {
+          forIndex(i, j, k => {
+            if (tokenSimilarityIndex.approxJaccardContainScorer(ex.id, k, k+1, otherIds(otherIndex), oi, oj,
+              approxJaroWinklerScorer(_, _, 0.95)) >= 0.9 || isLocalTranslation)
+              setIfNotUpdated("highFuzzyJaccContains@" + k, highSimContainsImpliesMatchf, -0.9)
+          })
+        }
+        if (a == starRatingIndex) {
+          forIndex(i, j, k => {
+            if (tokenSimilarityIndex.jaccardScore(ex.id, k, k+1, otherIds(otherIndex), oi, oj) >= 0.99)
+              setIfNotUpdated("highFuzzyJaccContains@" + k, highSimContainsImpliesMatchf, -0.9)
+          })
+        }
+        if (lowFuzzyJaccMatch)
+          setIfNotUpdated("lowSimilarity@[" + i + "," + j + "]", lowSimAndMatchf, 0.1)
+      }
+
+      override def scoreTransition(a: Int, b: Int, i: Int, j: Int): Double = 0.0
+
+      override def updateTransition(a: Int, b: Int, i: Int, j: Int, x: Double) {}
+
+      override def scoreStart(b: Int, j: Int): Double = 0.0
+
+      override def updateStart(b: Int, j: Int, x: Double) {}
+    }
+  }
 
   override def newConstraintMatchInferencer(ex: FeatVecAlignmentMentionExample, params: Params, counts: Params,
                                             constraintParams: ConstraintParams, constraintCounts: ConstraintParams,
@@ -200,63 +293,127 @@ object BFTApp extends ABFTAlign {
     new CRFMatchSegmentationInferencer(labelIndexer, maxLengths, getAlignFeatureVector, ex,
       params, counts, ispec, false, false) {
       override def scoreMatch(otherIndex: Int): Double = {
-        super.scoreMatch(otherIndex) + {
-          if (otherIndex < 0) 0.0
-          else score(constraintParams.constraints, highSimImpliesMatchf)
-        }
+        super.scoreMatch(otherIndex)
       }
 
       override def updateMatch(otherIndex: Int, v: Double) {
         if (doUpdate) super.updateMatch(otherIndex, v)
-        if (otherIndex >= 0) update(constraintCounts.constraints, highSimImpliesMatchf, v)
+      }
+
+      override def scoreEmission(a: Int, i: Int, j: Int): Double = {
+        var dotprod = super.scoreEmission(a, i, j)
+        if (j - i == 1 && featureVectorContains(featSeq(i), starPatternf) && a != starRatingIndex)
+          dotprod -= score(constraintParams.constraints, starPatternMismatchf)
+        dotprod
+      }
+
+      override def updateEmission(a: Int, i: Int, j: Int, x: Double) {
+        if (doUpdate) super.updateEmission(a, i, j, x)
+        if (j - i == 1 && featureVectorContains(featSeq(i), starPatternf) && a != starRatingIndex)
+          update(constraintCounts.constraints, starPatternMismatchf, -x)
       }
 
       override def scoreSingleEmission(a: Int, k: Int) = {
-        var dotprod = super.scoreSingleEmission(a, k)
-        if (featureVectorContains(featSeq(k), starPatternf) && a != starRatingIndex)
-          dotprod -= score(constraintParams.constraints, starPatternMismatchf)
-        dotprod
+        super.scoreSingleEmission(a, k)
       }
 
       override def updateSingleEmissionCached(a: Int, k: Int, x: Double) {
         if (!x.isNaN) {
           if (doUpdate) super.updateSingleEmissionCached(a, k, x)
-          if (featureVectorContains(featSeq(k), starPatternf) && a != starRatingIndex)
-            update(constraintCounts.constraints, starPatternMismatchf, -x)
         }
       }
 
       override def scoreSimilarity(otherIndex: Int, a: Int, i: Int, j: Int, oi: Int, oj: Int) = {
-        val fv = alignFeaturizer(a, ex.id, i, j, otherIds(otherIndex), oi, oj)
-        var dotprod = score(alignParams(a), fv)
-        if ((featureVectorContains(fv, highSimFuzzyJaccardf) && (a == hotelNameIndex || a == localAreaIndex)) ||
-          (featureVectorContains(fv, localareaTranslationf) && a == localAreaIndex)) {
-          dotprod -= score(constraintParams.constraints, highSimImpliesMatchf)
+        val fuzzyJaccMatchSim = tokenSimilarityIndex.approxJaccardScorer(ex.id, i, j, otherIds(otherIndex), oi, oj,
+          approxTokenMatcher(_, _))
+        val highFuzzyJaccMatch = fuzzyJaccMatchSim >= 0.9
+        val lowFuzzyJaccMatch = fuzzyJaccMatchSim < 0.2
+        val isLocalTranslation = isLocalAreaTranslation(ex.id, i, j, otherIds(otherIndex), oi, oj)
+        var dotprod = super.scoreSimilarity(otherIndex, a, i, j, oi, oj)
+        if (a == hotelNameIndex && highFuzzyJaccMatch)
+          dotprod += score(constraintParams.constraints, highSimHotelImpliesMatchf)
+        if (a == localAreaIndex && highFuzzyJaccMatch)
+          dotprod += score(constraintParams.constraints, highSimLocalImpliesMatchf)
+        if (a == localAreaIndex && isLocalTranslation)
+          dotprod += score(constraintParams.constraints, localAreaTranslationMatchf)
+        if (a == localAreaIndex || a == hotelNameIndex) {
+          forIndex(i, j, k => {
+            if (tokenSimilarityIndex.approxJaccardContainScorer(ex.id, k, k+1, otherIds(otherIndex), oi, oj,
+              approxJaroWinklerScorer(_, _, 0.95)) >= 0.9 || isLocalTranslation)
+              dotprod += score(constraintParams.constraints, highSimContainsImpliesMatchf)
+          })
         }
-        if (featureVectorContains(fv, lowSimFuzzyJaccardf)) {
+        if (a == starRatingIndex) {
+          forIndex(i, j, k => {
+            if (tokenSimilarityIndex.jaccardScore(ex.id, k, k+1, otherIds(otherIndex), oi, oj) >= 0.99)
+              dotprod += score(constraintParams.constraints, highSimContainsImpliesMatchf)
+          })
+        }
+        if (lowFuzzyJaccMatch)
           dotprod -= score(constraintParams.constraints, lowSimAndMatchf)
-        }
         dotprod
       }
 
       override def updateSimilarity(otherIndex: Int, a: Int, i: Int, j: Int, oi: Int, oj: Int, v: Double) {
-        val fv = alignFeaturizer(a, ex.id, i, j, otherIds(otherIndex), oi, oj)
-        if (doUpdate) update(alignCounts(a), fv, v)
-        if ((featureVectorContains(fv, highSimFuzzyJaccardf) && (a == hotelNameIndex || a == localAreaIndex)) ||
-          (featureVectorContains(fv, localareaTranslationf) && a == localAreaIndex)) {
-          update(constraintCounts.constraints, highSimImpliesMatchf, -v)
+        val fuzzyJaccMatchSim = tokenSimilarityIndex.approxJaccardScorer(ex.id, i, j, otherIds(otherIndex), oi, oj,
+          approxTokenMatcher(_, _))
+        val highFuzzyJaccMatch = fuzzyJaccMatchSim >= 0.9
+        val lowFuzzyJaccMatch = fuzzyJaccMatchSim < 0.2
+        val isLocalTranslation = isLocalAreaTranslation(ex.id, i, j, otherIds(otherIndex), oi, oj)
+        if (doUpdate) super.updateSimilarity(otherIndex, a, i, j, oi, oj, v)
+        if (a == hotelNameIndex && highFuzzyJaccMatch)
+          update(constraintCounts.constraints, highSimHotelImpliesMatchf, v)
+        if (a == localAreaIndex && highFuzzyJaccMatch)
+          update(constraintCounts.constraints, highSimLocalImpliesMatchf, v)
+        if (a == localAreaIndex && isLocalTranslation)
+          update(constraintCounts.constraints, localAreaTranslationMatchf, v)
+        if (a == localAreaIndex || a == hotelNameIndex) {
+          forIndex(i, j, k => {
+            if (tokenSimilarityIndex.approxJaccardContainScorer(ex.id, k, k+1, otherIds(otherIndex), oi, oj,
+              approxJaroWinklerScorer(_, _, 0.95)) >= 0.9 || isLocalTranslation)
+              update(constraintCounts.constraints, highSimContainsImpliesMatchf, v)
+          })
         }
-        if (featureVectorContains(fv, lowSimFuzzyJaccardf)) {
+        if (a == starRatingIndex) {
+          forIndex(i, j, k => {
+            if (tokenSimilarityIndex.jaccardScore(ex.id, k, k+1, otherIds(otherIndex), oi, oj) >= 0.99)
+              update(constraintCounts.constraints, highSimContainsImpliesMatchf, v)
+          })
+        }
+        if (lowFuzzyJaccMatch)
           update(constraintCounts.constraints, lowSimAndMatchf, -v)
-        }
+      }
+
+
+      override def scoreTransition(a: Int, b: Int, i: Int, j: Int): Double = {
+        var dotprod = super.scoreTransition(a, b, i, j)
+        if (b == starRatingIndex) dotprod -= score(constraintParams.constraints, countStarRatingf)
+        if (b == localAreaIndex) dotprod -= score(constraintParams.constraints, countLocalAreaf)
+        if (b == hotelNameIndex) dotprod -= score(constraintParams.constraints, countHotelNamef)
+        dotprod
       }
 
       override def updateTransition(a: Int, b: Int, i: Int, j: Int, x: Double) {
         if (doUpdate) super.updateTransition(a, b, i, j, x)
+        if (b == starRatingIndex) update(constraintCounts.constraints, countStarRatingf, -x)
+        if (b == localAreaIndex) update(constraintCounts.constraints, countLocalAreaf, -x)
+        if (b == hotelNameIndex) update(constraintCounts.constraints, countHotelNamef, -x)
       }
 
-      override def updateStart(a: Int, j: Int, x: Double) {
-        if (doUpdate) super.updateStart(a, j, x)
+
+      override def scoreStart(b: Int, j: Int): Double = {
+        var dotprod = super.scoreStart(b, j)
+        if (b == starRatingIndex) dotprod -= score(constraintParams.constraints, countStarRatingf)
+        if (b == localAreaIndex) dotprod -= score(constraintParams.constraints, countLocalAreaf)
+        if (b == hotelNameIndex) dotprod -= score(constraintParams.constraints, countHotelNamef)
+        dotprod
+      }
+
+      override def updateStart(b: Int, j: Int, x: Double) {
+        if (doUpdate) super.updateStart(b, j, x)
+        if (b == starRatingIndex) update(constraintCounts.constraints, countStarRatingf, -x)
+        if (b == localAreaIndex) update(constraintCounts.constraints, countLocalAreaf, -x)
+        if (b == hotelNameIndex) update(constraintCounts.constraints, countHotelNamef, -x)
       }
     }
   }
@@ -361,25 +518,28 @@ object BFTApp extends ABFTAlign {
 
     var params = newParams(false, true, labelIndexer, featureIndexer, alignFeatureIndexer)
     params.setUniform_!
-    params = learnSupervisedAlignParamsCRF(10, alignFvecExamples, params, 1, 1)
-    params.output(logger.info(_))
+    // params = learnSupervisedAlignParamsCRF(10, alignFvecExamples, params, 1, 1)
+    // params.output(logger.info(_))
 
     // 6. Constraint-based learning
-    val numAlignExamples = alignFvecExamples.size
     var constraintParams = newConstraintParams(false, true, constraintFeatureIndexer)
-    val defaultConstraintCounts = newConstraintParams(false, true, constraintFeatureIndexer)
     constraintParams.setUniform_!
-    defaultConstraintCounts.setUniform_!
-    defaultConstraintCounts.constraints.increment_!(highSimImpliesMatchf, numAlignExamples * 1.0)
-    defaultConstraintCounts.constraints.increment_!(lowSimAndMatchf, numAlignExamples * 0.1)
-    defaultConstraintCounts.constraints.increment_!(starPatternMismatchf, numAlignExamples * 0.01)
     params.setUniform_!
     for (iter <- 1 to 10) {
       // optimize constraint params first
-      constraintParams = learnSemiSupervisedConstraintParamsCRF(20, alignFvecExamples, params, constraintParams,
-        defaultConstraintCounts, 0.01)
+      constraintParams = learnSemiSupervisedConstraintParamsCRF(10, alignFvecExamples, params, constraintParams, 0.01)
       constraintParams.output(logger.info(_))
-      params = learnSemiSupervisedAlignParamsCRF(10, alignFvecExamples, params, constraintParams, 1)
+      for (ex <- alignFvecExamples) {
+        val inferencer = newConstraintMatchInferencer(ex, params, params, constraintParams, constraintParams,
+          InferSpec(0, 1, false, false, true, false, false, true, 1, 0), false)
+        logger.info("")
+        logger.info("id[" + ex.id + "]")
+        logger.info("matchScore: " + inferencer.logVZ)
+        logger.info("words: " + ex.words.mkString(" "))
+        logger.info("trueSegmentation: " + getBIOFromSegmentation(ex.trueSegmentation).mkString(" "))
+        logger.info("predSegmentation: " + getBIOFromSegmentation(inferencer.bestWidget.segmentation).mkString(" "))
+      }
+      params = learnSemiSupervisedAlignParamsCRF(20, alignFvecExamples, params, constraintParams, 1)
     }
     params.output(logger.info(_))
   }

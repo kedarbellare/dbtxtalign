@@ -897,6 +897,12 @@ trait AbstractAlign extends HasLogger {
     params
   }
 
+  def newDefaultConstraintMatchInferencer(ex: FeatVecAlignmentMentionExample, params: Params, counts: Params,
+                                          constraintParams: ConstraintParams, constraintCounts: ConstraintParams,
+                                          ispec: InferSpec): CRFMatchSegmentationInferencer = {
+    throw fail("Not implemented!!")
+  }
+
   def newConstraintMatchInferencer(ex: FeatVecAlignmentMentionExample, params: Params, counts: Params,
                                    constraintParams: ConstraintParams, constraintCounts: ConstraintParams,
                                    ispec: InferSpec, doUpdate: Boolean): CRFMatchSegmentationInferencer = {
@@ -947,6 +953,20 @@ trait AbstractAlign extends HasLogger {
     }
   }
 
+  class CRFSemiSupDefaultsSegmentationMatchWorker(val iter: Int, val constraintParams: ConstraintParams,
+                                                  val params: Params, val latch: CountDownLatch)
+    extends SemiSupSegmentationMatchWorker {
+    val unlabeledWeight: Double = 1.0
+    val constraintCounts = newConstraintParams(false, true, constraintFeatureIndexer)
+
+    def doInfer(ex: FeatVecAlignmentMentionExample, stepSize: Double) {
+      val predInfer = newDefaultConstraintMatchInferencer(ex, params, params, constraintParams, constraintCounts,
+        InferSpec(0, 1, false, ex.isRecord, false, false, false, true, 1, stepSize))
+      predInfer.updateCounts
+      stats -= predInfer.stats
+    }
+  }
+
   class CRFSemiSupSegmentationMatchWorker(val iter: Int, val constraintParams: ConstraintParams,
                                           val params: Params, val latch: CountDownLatch)
     extends SemiSupSegmentationMatchWorker {
@@ -963,8 +983,23 @@ trait AbstractAlign extends HasLogger {
 
   def learnSemiSupervisedConstraintParamsCRF(numIter: Int, examples: Seq[FeatVecAlignmentMentionExample],
                                              params: Params, constraintParams: ConstraintParams,
-                                             defaultConstraintCounts: ConstraintParams,
                                              invConstraintVariance: Double): ConstraintParams = {
+    val defaultLatch = new CountDownLatch(numWorkers)
+    val defaultWorkers = Vector.fill(numWorkers)(
+      actorOf(new CRFSemiSupDefaultsSegmentationMatchWorker(0, constraintParams, params, defaultLatch)).start())
+    for (b <- 0 until numBatches(examples.size)) {
+      defaultWorkers(b % numWorkers) ! ProcessMatchExamples(examples.slice(b * batchSize, (b + 1) * batchSize))
+    }
+
+    val defaultConstraintCounts = newConstraintParams(false, true, constraintFeatureIndexer)
+    defaultWorkers.foreach(worker => {
+      for (result <- worker.!!(FinishedMentions, MAXTIME).as[SegmentMatchSemiSupResult]) {
+        defaultConstraintCounts.add_!(result.counts, 1)
+      }
+    })
+    defaultLatch.await()
+    defaultConstraintCounts.output(logger.info(_))
+
     val objective = new ACRFObjective[ConstraintParams](constraintParams, invConstraintVariance) {
       val logger = Logger.getLogger("semi-supervised-constraint-param-trainer")
 
@@ -1049,8 +1084,8 @@ trait AbstractAlign extends HasLogger {
   }
 
   def learnSemiSupervisedAlignParamsCRF(numIter: Int, examples: Seq[FeatVecAlignmentMentionExample],
-                                   params: Params, constraintParams: ConstraintParams,
-                                   invVariance: Double): Params = {
+                                        params: Params, constraintParams: ConstraintParams,
+                                        invVariance: Double): Params = {
     // calculate constraints once
     val constraintLatch = new CountDownLatch(numWorkers)
     val constraintWorkers = Vector.fill(numWorkers)(
