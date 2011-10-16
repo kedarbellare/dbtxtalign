@@ -186,11 +186,12 @@ object BFTApp extends ABFTAlign {
 
   override def getAlignFeatureVector(l: Int, id1: String, i1: Int, j1: Int,
                                      id2: String, i2: Int, j2: Int): FtrVec = {
-    val fv = super.getAlignFeatureVector(l, id1, i1, j1, id2, i2, j2)
-    if (l == localAreaIndex && isLocalAreaTranslation(id1, i1, j1, id2, i2, j2)) {
-      fv += localareaTranslationf -> 1.0
-    }
-    fv
+    //    val fv = super.getAlignFeatureVector(l, id1, i1, j1, id2, i2, j2)
+    //    if (l == localAreaIndex && isLocalAreaTranslation(id1, i1, j1, id2, i2, j2)) {
+    //      fv += localareaTranslationf -> 1.0
+    //    }
+    //    fv
+    new FtrVec
   }
 
   // Constraint features
@@ -219,8 +220,8 @@ object BFTApp extends ABFTAlign {
                                                    ispec: InferSpec): CRFMatchSegmentationInferencer = {
     val alreadyUpdated = new HashSet[String]
     constraintCounts.constraints.increment_!(countStarRatingf, 1.0)
-    constraintCounts.constraints.increment_!(countLocalAreaf, 1.0)
-    constraintCounts.constraints.increment_!(countHotelNamef, 1.0)
+    constraintCounts.constraints.increment_!(countLocalAreaf, 1.1)
+    constraintCounts.constraints.increment_!(countHotelNamef, 1.1)
 
     def setIfNotUpdated(fname: String, f: Int, v: Double) {
       if (!alreadyUpdated.contains(fname)) {
@@ -526,12 +527,13 @@ object BFTApp extends ABFTAlign {
     constraintParams.setUniform_!
     params.setUniform_!
     for (iter <- 1 to 10) {
+      logger.info("=== Semi-supervised constrained iteration=" + iter)
       // optimize constraint params first
       constraintParams = learnSemiSupervisedConstraintParamsCRF(10, alignFvecExamples, params, constraintParams, 0.01)
       constraintParams.output(logger.info(_))
       // do decoding
-      decodeSegmentationAlign("bft.crf_align.true.txt", "bft.crf_align.pred.txt", alignFvecExamples,
-        (ex: FeatVecAlignmentMentionExample) => {
+      decodeSegmentationAlign("bft.crf_align.constrained.true.txt", "bft.crf_align.constrained.pred.txt",
+        alignFvecExamples, (ex: FeatVecAlignmentMentionExample) => {
           val inferencer = newConstraintMatchInferencer(ex, params, params, constraintParams, constraintParams,
             InferSpec(0, 1, false, false, true, false, false, true, 1, 0), false)
           logger.info("")
@@ -543,6 +545,18 @@ object BFTApp extends ABFTAlign {
           inferencer.bestWidget.segmentation
         })
       params = learnSemiSupervisedAlignParamsCRF(20, alignFvecExamples, params, constraintParams, 1)
+      decodeSegmentationAlign("bft.crf_align.true.txt", "bft.crf_align.pred.txt",
+        alignFvecExamples, (ex: FeatVecAlignmentMentionExample) => {
+          val inferencer = new CRFMatchSegmentationInferencer(labelIndexer, maxLengths, getAlignFeatureVector,
+            ex, params, params, InferSpec(0, 1, false, ex.isRecord, true, false, false, true, 1, 0), false, false)
+          logger.info("")
+          logger.info("id[" + ex.id + "]")
+          logger.info("matchScore: " + inferencer.logVZ)
+          logger.info("words: " + ex.words.mkString(" "))
+          logger.info("trueSegmentation: " + getBIOFromSegmentation(ex.trueSegmentation).mkString(" "))
+          logger.info("predSegmentation: " + getBIOFromSegmentation(inferencer.bestWidget.segmentation).mkString(" "))
+          inferencer.bestWidget.segmentation
+        })
     }
     params.output(logger.info(_))
   }
