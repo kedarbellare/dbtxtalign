@@ -188,14 +188,17 @@ object BFTApp extends ABFTAlign {
                                      id2: String, i2: Int, j2: Int): FtrVec = {
     val fv = new FtrVec
     val fuzzyJacc = tokenSimilarityIndex.approxJaccardScorer(id1, i1, j1, id2, i2, j2, approxTokenMatcher(_, _))
+    val fuzzyJaccContains = tokenSimilarityIndex.approxJaccardContainScorer(id1, i1, j1, id2, i2, j2, approxTokenMatcher(_, _))
     val jacc = tokenSimilarityIndex.jaccardScore(id1, i1, j1, id2, i2, j2)
     fv += alignFeatureIndexer.indexOf_?(BIAS_MATCH) -> 1.0
     for (sim <- Seq(0.9, 1.0)) {
       addGTEFeatureToVector_?(fv, alignFeatureIndexer, fuzzyJacc, sim, FUZZY_JACCARD)
+      addGTEFeatureToVector_?(fv, alignFeatureIndexer, fuzzyJaccContains, sim, FUZZY_JACCARD_CONTAINS)
       addGTEFeatureToVector_?(fv, alignFeatureIndexer, jacc, sim, JACCARD)
     }
     for (sim <- Seq(0.1, 0.2)) {
       addLTFeatureToVector_?(fv, alignFeatureIndexer, fuzzyJacc, sim, FUZZY_JACCARD)
+      addLTFeatureToVector_?(fv, alignFeatureIndexer, fuzzyJaccContains, sim, FUZZY_JACCARD_CONTAINS)
       addLTFeatureToVector_?(fv, alignFeatureIndexer, jacc, sim, JACCARD)
     }
     if (isLocalAreaTranslation(id1, i1, j1, id2, i2, j2)) {
@@ -285,8 +288,8 @@ object BFTApp extends ABFTAlign {
             }
           })
         }
-        if (lowFuzzyJaccMatch)
-          setIfNotUpdated("lowSimilarity@[" + i + "," + j + "]", lowSimAndMatchf, 0.1)
+        if (a != otherLabelIndex && lowFuzzyJaccMatch)
+          setIfNotUpdated("lowSimilarity@[" + i + "," + j + "]", lowSimAndMatchf, 0.01)
       }
 
       override def scoreTransition(a: Int, b: Int, i: Int, j: Int): Double = 0.0
@@ -361,7 +364,7 @@ object BFTApp extends ABFTAlign {
               dotprod += score(constraintParams.constraints, highSimContainsImpliesMatchf)
           })
         }
-        if (lowFuzzyJaccMatch)
+        if (a != otherLabelIndex && lowFuzzyJaccMatch)
           dotprod -= score(constraintParams.constraints, lowSimAndMatchf)
         dotprod
       }
@@ -392,7 +395,7 @@ object BFTApp extends ABFTAlign {
               update(constraintCounts.constraints, highSimContainsImpliesMatchf, v)
           })
         }
-        if (lowFuzzyJaccMatch)
+        if (a != otherLabelIndex && lowFuzzyJaccMatch)
           update(constraintCounts.constraints, lowSimAndMatchf, -v)
       }
 
