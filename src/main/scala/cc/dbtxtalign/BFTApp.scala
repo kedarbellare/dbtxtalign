@@ -5,7 +5,7 @@ import com.mongodb.casbah.Imports._
 import blocking.{AbstractBlocker, UnionIndexBlocker, InvertedIndexBlocker, PhraseHash}
 import mongo.KB
 import cc.refectorie.user.kedarb.dynprog.InferSpec
-import cc.refectorie.user.kedarb.dynprog.types.{Indexer, FtrVec}
+import cc.refectorie.user.kedarb.dynprog.types.FtrVec
 import cc.refectorie.user.kedarb.dynprog.segment.Segmentation
 import collection.mutable.{HashSet, ArrayBuffer, HashMap}
 import params.{ConstraintParams, Params}
@@ -186,12 +186,22 @@ object BFTApp extends ABFTAlign {
 
   override def getAlignFeatureVector(l: Int, id1: String, i1: Int, j1: Int,
                                      id2: String, i2: Int, j2: Int): FtrVec = {
-    //    val fv = super.getAlignFeatureVector(l, id1, i1, j1, id2, i2, j2)
-    //    if (l == localAreaIndex && isLocalAreaTranslation(id1, i1, j1, id2, i2, j2)) {
-    //      fv += localareaTranslationf -> 1.0
-    //    }
-    //    fv
-    new FtrVec
+    val fv = new FtrVec
+    val fuzzyJacc = tokenSimilarityIndex.approxJaccardScorer(id1, i1, j1, id2, i2, j2, approxTokenMatcher(_, _))
+    val jacc = tokenSimilarityIndex.jaccardScore(id1, i1, j1, id2, i2, j2)
+    fv += alignFeatureIndexer.indexOf_?(BIAS_MATCH) -> 1.0
+    for (sim <- Seq(0.9, 1.0)) {
+      addGTEFeatureToVector_?(fv, alignFeatureIndexer, fuzzyJacc, sim, FUZZY_JACCARD)
+      addGTEFeatureToVector_?(fv, alignFeatureIndexer, jacc, sim, JACCARD)
+    }
+    for (sim <- Seq(0.1, 0.2)) {
+      addLTFeatureToVector_?(fv, alignFeatureIndexer, fuzzyJacc, sim, FUZZY_JACCARD)
+      addLTFeatureToVector_?(fv, alignFeatureIndexer, jacc, sim, JACCARD)
+    }
+    if (isLocalAreaTranslation(id1, i1, j1, id2, i2, j2)) {
+      fv += localareaTranslationf -> 1.0
+    }
+    fv
   }
 
   // Constraint features
@@ -219,10 +229,6 @@ object BFTApp extends ABFTAlign {
                                                    constraintParams: ConstraintParams, constraintCounts: ConstraintParams,
                                                    ispec: InferSpec): CRFMatchSegmentationInferencer = {
     val alreadyUpdated = new HashSet[String]
-    constraintCounts.constraints.increment_!(countStarRatingf, 1.0)
-    constraintCounts.constraints.increment_!(countLocalAreaf, 1.1)
-    constraintCounts.constraints.increment_!(countHotelNamef, 1.1)
-
     def setIfNotUpdated(fname: String, f: Int, v: Double) {
       if (!alreadyUpdated.contains(fname)) {
         constraintCounts.constraints.increment_!(f, v)
@@ -264,14 +270,19 @@ object BFTApp extends ABFTAlign {
         if (a == localAreaIndex || a == hotelNameIndex) {
           forIndex(i, j, k => {
             if (tokenSimilarityIndex.approxJaccardContainScorer(ex.id, k, k + 1, otherIds(otherIndex), oi, oj,
-              approxJaroWinklerScorer(_, _, 0.95)) >= 0.9 || isLocalTranslation)
-              setIfNotUpdated("highFuzzyJaccContains@" + k, highSimContainsImpliesMatchf, -0.9)
+              approxJaroWinklerScorer(_, _, 0.95)) >= 0.9 || isLocalTranslation) {
+              setIfNotUpdated("highFuzzyJaccContains@" + k, highSimContainsImpliesMatchf, -0.99)
+              if (a == hotelNameIndex) setIfNotUpdated("countOfHotel", countHotelNamef, 1.1)
+              if (a == localAreaIndex) setIfNotUpdated("countOfLocal", countLocalAreaf, 1.1)
+            }
           })
         }
         if (a == starRatingIndex) {
           forIndex(i, j, k => {
-            if (tokenSimilarityIndex.jaccardScore(ex.id, k, k + 1, otherIds(otherIndex), oi, oj) >= 0.99)
-              setIfNotUpdated("highFuzzyJaccContains@" + k, highSimContainsImpliesMatchf, -0.9)
+            if (tokenSimilarityIndex.jaccardScore(ex.id, k, k + 1, otherIds(otherIndex), oi, oj) >= 0.99) {
+              setIfNotUpdated("highFuzzyJaccContains@" + k, highSimContainsImpliesMatchf, -0.99)
+              setIfNotUpdated("countOfStar", countStarRatingf, 1.0)
+            }
           })
         }
         if (lowFuzzyJaccMatch)

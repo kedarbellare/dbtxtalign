@@ -125,15 +125,26 @@ trait AbstractAlign extends HasLogger {
     indexer += _lt(simStr, threshold)
   }
 
-  def addFeatureToVector_?(fv: FtrVec, indexer: Indexer[String], score: Double, threshold: Double,
-                           simStr: String) = {
+  def addGTEFeatureToVector_?(fv: FtrVec, indexer: Indexer[String], score: Double, threshold: Double,
+                                simStr: String) = {
     if (score >= threshold) {
       val trueIdx = indexer.indexOf_?(_gte(simStr, threshold))
       if (trueIdx >= 0) fv += trueIdx -> 1.0
-    } else {
+    }
+  }
+
+  def addLTFeatureToVector_?(fv: FtrVec, indexer: Indexer[String], score: Double, threshold: Double,
+                                simStr: String) = {
+    if (score < threshold) {
       val falseIdx = indexer.indexOf_?(_lt(simStr, threshold))
       if (falseIdx >= 0) fv += falseIdx -> 1.0
     }
+  }
+
+  def addFeatureToVector_?(fv: FtrVec, indexer: Indexer[String], score: Double, threshold: Double,
+                           simStr: String) = {
+    addGTEFeatureToVector_?(fv, indexer, score, threshold, simStr)
+    addLTFeatureToVector_?(fv, indexer, score, threshold, simStr)
   }
 
   def adjustSegmentation(words: Seq[String], segmentation: Segmentation): Segmentation = {
