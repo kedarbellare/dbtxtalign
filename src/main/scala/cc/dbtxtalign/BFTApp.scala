@@ -262,14 +262,14 @@ object BFTApp extends ABFTAlign {
           setIfNotUpdated("translationLocal@[" + i + "," + j + "]", localAreaTranslationMatchf, -0.99)
         if (a == localAreaIndex || a == hotelNameIndex) {
           forIndex(i, j, k => {
-            if (tokenSimilarityIndex.approxJaccardContainScorer(ex.id, k, k+1, otherIds(otherIndex), oi, oj,
+            if (tokenSimilarityIndex.approxJaccardContainScorer(ex.id, k, k + 1, otherIds(otherIndex), oi, oj,
               approxJaroWinklerScorer(_, _, 0.95)) >= 0.9 || isLocalTranslation)
               setIfNotUpdated("highFuzzyJaccContains@" + k, highSimContainsImpliesMatchf, -0.9)
           })
         }
         if (a == starRatingIndex) {
           forIndex(i, j, k => {
-            if (tokenSimilarityIndex.jaccardScore(ex.id, k, k+1, otherIds(otherIndex), oi, oj) >= 0.99)
+            if (tokenSimilarityIndex.jaccardScore(ex.id, k, k + 1, otherIds(otherIndex), oi, oj) >= 0.99)
               setIfNotUpdated("highFuzzyJaccContains@" + k, highSimContainsImpliesMatchf, -0.9)
           })
         }
@@ -338,14 +338,14 @@ object BFTApp extends ABFTAlign {
           dotprod += score(constraintParams.constraints, localAreaTranslationMatchf)
         if (a == localAreaIndex || a == hotelNameIndex) {
           forIndex(i, j, k => {
-            if (tokenSimilarityIndex.approxJaccardContainScorer(ex.id, k, k+1, otherIds(otherIndex), oi, oj,
+            if (tokenSimilarityIndex.approxJaccardContainScorer(ex.id, k, k + 1, otherIds(otherIndex), oi, oj,
               approxJaroWinklerScorer(_, _, 0.95)) >= 0.9 || isLocalTranslation)
               dotprod += score(constraintParams.constraints, highSimContainsImpliesMatchf)
           })
         }
         if (a == starRatingIndex) {
           forIndex(i, j, k => {
-            if (tokenSimilarityIndex.jaccardScore(ex.id, k, k+1, otherIds(otherIndex), oi, oj) >= 0.99)
+            if (tokenSimilarityIndex.jaccardScore(ex.id, k, k + 1, otherIds(otherIndex), oi, oj) >= 0.99)
               dotprod += score(constraintParams.constraints, highSimContainsImpliesMatchf)
           })
         }
@@ -369,14 +369,14 @@ object BFTApp extends ABFTAlign {
           update(constraintCounts.constraints, localAreaTranslationMatchf, v)
         if (a == localAreaIndex || a == hotelNameIndex) {
           forIndex(i, j, k => {
-            if (tokenSimilarityIndex.approxJaccardContainScorer(ex.id, k, k+1, otherIds(otherIndex), oi, oj,
+            if (tokenSimilarityIndex.approxJaccardContainScorer(ex.id, k, k + 1, otherIds(otherIndex), oi, oj,
               approxJaroWinklerScorer(_, _, 0.95)) >= 0.9 || isLocalTranslation)
               update(constraintCounts.constraints, highSimContainsImpliesMatchf, v)
           })
         }
         if (a == starRatingIndex) {
           forIndex(i, j, k => {
-            if (tokenSimilarityIndex.jaccardScore(ex.id, k, k+1, otherIds(otherIndex), oi, oj) >= 0.99)
+            if (tokenSimilarityIndex.jaccardScore(ex.id, k, k + 1, otherIds(otherIndex), oi, oj) >= 0.99)
               update(constraintCounts.constraints, highSimContainsImpliesMatchf, v)
           })
         }
@@ -529,16 +529,19 @@ object BFTApp extends ABFTAlign {
       // optimize constraint params first
       constraintParams = learnSemiSupervisedConstraintParamsCRF(10, alignFvecExamples, params, constraintParams, 0.01)
       constraintParams.output(logger.info(_))
-      for (ex <- alignFvecExamples) {
-        val inferencer = newConstraintMatchInferencer(ex, params, params, constraintParams, constraintParams,
-          InferSpec(0, 1, false, false, true, false, false, true, 1, 0), false)
-        logger.info("")
-        logger.info("id[" + ex.id + "]")
-        logger.info("matchScore: " + inferencer.logVZ)
-        logger.info("words: " + ex.words.mkString(" "))
-        logger.info("trueSegmentation: " + getBIOFromSegmentation(ex.trueSegmentation).mkString(" "))
-        logger.info("predSegmentation: " + getBIOFromSegmentation(inferencer.bestWidget.segmentation).mkString(" "))
-      }
+      // do decoding
+      decodeSegmentationAlign("bft.crf_align.true.txt", "bft.crf_align.pred.txt", alignFvecExamples,
+        (ex: FeatVecAlignmentMentionExample) => {
+          val inferencer = newConstraintMatchInferencer(ex, params, params, constraintParams, constraintParams,
+            InferSpec(0, 1, false, false, true, false, false, true, 1, 0), false)
+          logger.info("")
+          logger.info("id[" + ex.id + "]")
+          logger.info("matchScore: " + inferencer.logVZ)
+          logger.info("words: " + ex.words.mkString(" "))
+          logger.info("trueSegmentation: " + getBIOFromSegmentation(ex.trueSegmentation).mkString(" "))
+          logger.info("predSegmentation: " + getBIOFromSegmentation(inferencer.bestWidget.segmentation).mkString(" "))
+          inferencer.bestWidget.segmentation
+        })
       params = learnSemiSupervisedAlignParamsCRF(20, alignFvecExamples, params, constraintParams, 1)
     }
     params.output(logger.info(_))

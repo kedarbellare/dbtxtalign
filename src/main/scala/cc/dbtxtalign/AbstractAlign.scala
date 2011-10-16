@@ -1027,7 +1027,9 @@ trait AbstractAlign extends HasLogger {
           }
         })
         latch.await()
-        stats.logZ -= constraintParams.getWts(0).dot(defaultConstraintCounts.getWtVecs(0))
+        forIndex(constraintParams.getWtVecs.length, k => {
+          stats.logZ -= constraintParams.getWtVecs(k).dot(defaultConstraintCounts.getWtVecs(k))
+        })
         constraintExpectations.add_!(defaultConstraintCounts, -1)
         (constraintExpectations, stats)
       }
@@ -1059,7 +1061,7 @@ trait AbstractAlign extends HasLogger {
 
     def doInfer(ex: FeatVecAlignmentMentionExample, stepSize: Double) {
       newConstraintMatchInferencer(ex, params, counts, constraintParams, constraintCounts,
-        InferSpec(0, 1, false, ex.isRecord, false, false, false, true, 1, 1), true).updateCounts
+        InferSpec(0, 1, false, ex.isRecord, false, false, false, true, 1, stepSize), true).updateCounts
     }
   }
 
@@ -1072,14 +1074,15 @@ trait AbstractAlign extends HasLogger {
     val constraintCounts = newConstraintParams(false, true, constraintFeatureIndexer)
 
     def doInfer(ex: FeatVecAlignmentMentionExample, stepSize: Double) {
-      val truthInfer = newConstraintMatchInferencer(ex, params, params, constraintParams, constraintCounts,
-        InferSpec(0, 1, false, ex.isRecord, false, false, false, true, 1, 0), false)
+      // val truthInfer = newConstraintMatchInferencer(ex, params, params, constraintParams, constraintCounts,
+      //  InferSpec(0, 1, false, ex.isRecord, false, false, false, true, 1, 0), false)
       // expectations
       val predInfer = new CRFMatchSegmentationInferencer(labelIndexer, maxLengths, getAlignFeatureVector,
         ex, params, counts, InferSpec(0, 1, false, false, false, false, false, true, 1, -stepSize),
         false, false)
       predInfer.updateCounts
-      stats += (truthInfer.stats - predInfer.stats) * stepSize
+      // stats += (truthInfer.stats - predInfer.stats) * stepSize
+      stats -= predInfer.stats * stepSize
     }
   }
 
@@ -1125,6 +1128,10 @@ trait AbstractAlign extends HasLogger {
           }
         })
         expectationLatch.await()
+        // add theta * E_q[f(x, y)] to objective (constraints term)
+        forIndex(constraints.getWtVecs.length, (k: Int) => {
+          stats.logZ += constraints.getWtVecs(k).dot(params.getWtVecs(k))
+        })
         expectations.add_!(constraints, 1)
         (expectations, stats)
       }
@@ -1145,5 +1152,29 @@ trait AbstractAlign extends HasLogger {
     optimizer.optimize(objective, stats, stop)
 
     params
+  }
+
+  def decodeSegmentationAlign(trueFilename: String, predFilename: String, examples: Seq[FeatVecAlignmentMentionExample],
+                              decoder: (FeatVecAlignmentMentionExample) => Segmentation) {
+    val trueOut = new PrintWriter(trueFilename)
+    val predOut = new PrintWriter(predFilename)
+    val segmentPerf = new SegmentSegmentationEvaluator("textSegEval", labelIndexer)
+    val tokenPerf = new SegmentLabelAccuracyEvaluator("textLblEval")
+    val perLabelPerf = new SegmentPerLabelAccuracyEvaluator("textPerLblEval", labelIndexer)
+    for (ex <- examples if !ex.isRecord) {
+      val predWidget = decoder(ex)
+      val predSeg = adjustSegmentation(ex.words, predWidget)
+      val trueSeg = adjustSegmentation(ex.words, ex.trueSegmentation)
+      tokenPerf.add(trueSeg, predSeg)
+      segmentPerf.add(trueSeg, predSeg)
+      perLabelPerf.add(trueSeg, predSeg)
+      predOut.println(SegmentationHelper.toFullString(ex.words, predSeg, labelIndexer(_)))
+      trueOut.println(SegmentationHelper.toFullString(ex.words, trueSeg, labelIndexer(_)))
+    }
+    tokenPerf.output(logger.info(_))
+    perLabelPerf.output(logger.info(_))
+    segmentPerf.output(logger.info(_))
+    trueOut.close()
+    predOut.close()
   }
 }
