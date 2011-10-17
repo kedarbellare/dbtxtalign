@@ -188,17 +188,17 @@ object BFTApp extends ABFTAlign {
                                      id2: String, i2: Int, j2: Int): FtrVec = {
     val fv = new FtrVec
     val fuzzyJacc = tokenSimilarityIndex.approxJaccardScorer(id1, i1, j1, id2, i2, j2, approxTokenMatcher(_, _))
-    val fuzzyJaccContains = tokenSimilarityIndex.approxJaccardContainScorer(id1, i1, j1, id2, i2, j2, approxTokenMatcher(_, _))
+    // val fuzzyJaccContains = tokenSimilarityIndex.approxJaccardContainScorer(id1, i1, j1, id2, i2, j2, approxTokenMatcher(_, _))
     val jacc = tokenSimilarityIndex.jaccardScore(id1, i1, j1, id2, i2, j2)
     fv += alignFeatureIndexer.indexOf_?(BIAS_MATCH) -> 1.0
     for (sim <- Seq(0.9, 1.0)) {
       addGTEFeatureToVector_?(fv, alignFeatureIndexer, fuzzyJacc, sim, FUZZY_JACCARD)
-      addGTEFeatureToVector_?(fv, alignFeatureIndexer, fuzzyJaccContains, sim, FUZZY_JACCARD_CONTAINS)
+      // addGTEFeatureToVector_?(fv, alignFeatureIndexer, fuzzyJaccContains, sim, FUZZY_JACCARD_CONTAINS)
       addGTEFeatureToVector_?(fv, alignFeatureIndexer, jacc, sim, JACCARD)
     }
     for (sim <- Seq(0.1, 0.2)) {
       addLTFeatureToVector_?(fv, alignFeatureIndexer, fuzzyJacc, sim, FUZZY_JACCARD)
-      addLTFeatureToVector_?(fv, alignFeatureIndexer, fuzzyJaccContains, sim, FUZZY_JACCARD_CONTAINS)
+      // addLTFeatureToVector_?(fv, alignFeatureIndexer, fuzzyJaccContains, sim, FUZZY_JACCARD_CONTAINS)
       addLTFeatureToVector_?(fv, alignFeatureIndexer, jacc, sim, JACCARD)
     }
     if (isLocalAreaTranslation(id1, i1, j1, id2, i2, j2)) {
@@ -226,7 +226,7 @@ object BFTApp extends ABFTAlign {
   val lowSimAndMatchf = constraintFeatureIndexer.indexOf_!("lowSimilarityAndMatch")
   // I(not(starrating) && starPattern) <= 0.01 * C(starPattern)
   val starPatternMismatchf = constraintFeatureIndexer.indexOf_!("starRatingAndNotMatchesPattern")
-
+  val notOtherAndMatchesPatternf = constraintFeatureIndexer.indexOf_!("notOtherAndMatchesPattern")
 
   override def newDefaultConstraintMatchInferencer(ex: FeatVecAlignmentMentionExample, params: Params, counts: Params,
                                                    constraintParams: ConstraintParams, constraintCounts: ConstraintParams,
@@ -254,7 +254,10 @@ object BFTApp extends ABFTAlign {
 
       override def scoreSingleEmission(a: Int, k: Int) = 0.0
 
-      override def updateSingleEmissionCached(a: Int, k: Int, x: Double) {}
+      override def updateSingleEmissionCached(a: Int, k: Int, x: Double) {
+        if (a != otherLabelIndex && simplify(words(k)) != words(k))
+          setIfNotUpdated("other@" + k, notOtherAndMatchesPatternf, 0.01)
+      }
 
       override def scoreSimilarity(otherIndex: Int, a: Int, i: Int, j: Int, oi: Int, oj: Int) = 0.0
 
@@ -329,12 +332,17 @@ object BFTApp extends ABFTAlign {
       }
 
       override def scoreSingleEmission(a: Int, k: Int) = {
-        super.scoreSingleEmission(a, k)
+        var dotprod = super.scoreSingleEmission(a, k)
+        if (a != otherLabelIndex && simplify(words(k)) != words(k))
+          dotprod -= score(constraintParams.constraints, notOtherAndMatchesPatternf)
+        dotprod
       }
 
       override def updateSingleEmissionCached(a: Int, k: Int, x: Double) {
         if (!x.isNaN) {
           if (doUpdate) super.updateSingleEmissionCached(a, k, x)
+          if (a != otherLabelIndex && simplify(words(k)) != words(k))
+            update(constraintCounts.constraints, notOtherAndMatchesPatternf, -x)
         }
       }
 
@@ -483,7 +491,7 @@ object BFTApp extends ABFTAlign {
 
     val hplMentions = new ArrayBuffer[Mention]
     val hplOtherMentions = new ArrayBuffer[Seq[Mention]]
-    for (m1 <- rawTexts) {
+    for (m1 <- rawTexts.take(100)) {
       for (m2 <- rawRecords if blocker.isPair(m1.id, m2.id)) {
         hplMentions += m1
         hplOtherMentions += Seq(m2)
@@ -507,7 +515,8 @@ object BFTApp extends ABFTAlign {
     // 5. Do alignment using gold-standard clusters
     val alignFvecExamples = new ArrayBuffer[FeatVecAlignmentMentionExample]
     var maxDegree = 0
-    for (m1 <- rawMentions) {
+    // TODO: change back
+    for (m1 <- rawTexts.take(100)) {
       val clustOpt1 = id2cluster.get(m1.id)
       val ex = id2fvecExample(m1.id)
       var degree = 0
