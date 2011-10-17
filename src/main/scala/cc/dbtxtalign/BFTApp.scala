@@ -543,7 +543,7 @@ object BFTApp extends ABFTAlign {
     for (iter <- 1 to 10) {
       logger.info("=== Semi-supervised constrained iteration=" + iter)
       // optimize constraint params first
-      constraintParams = learnSemiSupervisedConstraintParamsCRF(10, alignFvecExamples, params, constraintParams, 0.01)
+      constraintParams = learnSemiSupervisedConstraintParamsCRF(10, alignFvecExamples, params, constraintParams, 1.0)
       constraintParams.output(logger.info(_))
       // do decoding
       decodeSegmentationAlign("bft.crf_align.constrained.true.txt", "bft.crf_align.constrained.pred.txt",
