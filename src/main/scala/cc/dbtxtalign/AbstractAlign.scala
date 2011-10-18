@@ -126,7 +126,7 @@ trait AbstractAlign extends HasLogger {
   }
 
   def addGTEFeatureToVector_?(fv: FtrVec, indexer: Indexer[String], score: Double, threshold: Double,
-                                simStr: String) = {
+                              simStr: String) = {
     if (score >= threshold) {
       val trueIdx = indexer.indexOf_?(_gte(simStr, threshold))
       if (trueIdx >= 0) fv += trueIdx -> 1.0
@@ -134,7 +134,7 @@ trait AbstractAlign extends HasLogger {
   }
 
   def addLTFeatureToVector_?(fv: FtrVec, indexer: Indexer[String], score: Double, threshold: Double,
-                                simStr: String) = {
+                             simStr: String) = {
     if (score < threshold) {
       val falseIdx = indexer.indexOf_?(_lt(simStr, threshold))
       if (falseIdx >= 0) fv += falseIdx -> 1.0
@@ -429,7 +429,7 @@ trait AbstractAlign extends HasLogger {
     def latch: CountDownLatch
 
     def updateProgress(done: Boolean = false) {
-      progress += 1
+      if (!done) progress += 1
       if (progress % 1000 == 0 || done) logger.info("Processed " + progress + " mentions")
     }
 
@@ -789,7 +789,7 @@ trait AbstractAlign extends HasLogger {
     def latch: CountDownLatch
 
     def updateProgress(done: Boolean = false) {
-      progress += 1
+      if (!done) progress += 1
       if (progress % 100 == 0 || done) logger.info("Processed " + progress + " mentions")
     }
 
@@ -938,7 +938,7 @@ trait AbstractAlign extends HasLogger {
     def latch: CountDownLatch
 
     def updateProgress(done: Boolean = false) {
-      progress += 1
+      if (!done) progress += 1
       if (progress % 100 == 0 || done) logger.info("Processed " + progress + " mentions")
     }
 
@@ -971,10 +971,12 @@ trait AbstractAlign extends HasLogger {
     val constraintCounts = newConstraintParams(false, true, constraintFeatureIndexer)
 
     def doInfer(ex: FeatVecAlignmentMentionExample, stepSize: Double) {
-      val predInfer = newDefaultConstraintMatchInferencer(ex, params, params, constraintParams, constraintCounts,
-        InferSpec(0, 1, false, ex.isRecord, false, false, false, true, 1, stepSize))
-      predInfer.updateCounts
-      stats -= predInfer.stats
+      if (!ex.isRecord) {
+        val predInfer = newDefaultConstraintMatchInferencer(ex, params, params, constraintParams, constraintCounts,
+          InferSpec(0, 1, false, false, false, false, false, true, 1, stepSize))
+        predInfer.updateCounts
+        stats -= predInfer.stats
+      }
     }
   }
 
@@ -985,10 +987,12 @@ trait AbstractAlign extends HasLogger {
     val constraintCounts = newConstraintParams(false, true, constraintFeatureIndexer)
 
     def doInfer(ex: FeatVecAlignmentMentionExample, stepSize: Double) {
-      val predInfer = newConstraintMatchInferencer(ex, params, params, constraintParams, constraintCounts,
-        InferSpec(0, 1, false, ex.isRecord, false, false, false, true, 1, -stepSize), false)
-      predInfer.updateCounts
-      stats -= predInfer.stats
+      if (!ex.isRecord) {
+        val predInfer = newConstraintMatchInferencer(ex, params, params, constraintParams, constraintCounts,
+          InferSpec(0, 1, false, ex.isRecord, false, false, false, true, 1, -stepSize), false)
+        predInfer.updateCounts
+        stats -= predInfer.stats
+      }
     }
   }
 
@@ -1062,48 +1066,47 @@ trait AbstractAlign extends HasLogger {
     constraintParams
   }
 
-  class CRFSemiSupConstraintsSegmentationMatchWorker(val iter: Int, val params: Params,
+  class CRFSemiSupConstraintsSegmentationMatchWorker(val iter: Int, val params: Params, val unlabeledWeight: Double,
                                                      val constraintParams: ConstraintParams,
                                                      val latch: CountDownLatch)
     extends SegmentationMatchWorker {
-    val unlabeledWeight: Double = 1.0
     val counts = newParams(false, true, labelIndexer, featureIndexer, alignFeatureIndexer)
     val constraintCounts = newConstraintParams(false, true, constraintFeatureIndexer)
 
     def doInfer(ex: FeatVecAlignmentMentionExample, stepSize: Double) {
-      newConstraintMatchInferencer(ex, params, counts, constraintParams, constraintCounts,
-        InferSpec(0, 1, false, ex.isRecord, false, false, false, true, 1, stepSize), true).updateCounts
+      if (ex.isRecord)
+        new CRFMatchSegmentationInferencer(labelIndexer, maxLengths, getAlignFeatureVector, ex, params, counts,
+          InferSpec(0, 1, false, true, false, false, false, true, 1, stepSize), true, true).updateCounts
+      else
+        newConstraintMatchInferencer(ex, params, counts, constraintParams, constraintCounts,
+          InferSpec(0, 1, false, false, false, false, false, true, 1, stepSize), true).updateCounts
     }
   }
 
-  class CRFSemiSupExpectationsSegmentationMatchWorker(val iter: Int, val params: Params,
+  class CRFSemiSupExpectationsSegmentationMatchWorker(val iter: Int, val params: Params, val unlabeledWeight: Double,
                                                       val constraintParams: ConstraintParams,
                                                       val latch: CountDownLatch)
     extends SegmentationMatchWorker {
-    val unlabeledWeight: Double = 1.0
     val counts = newParams(false, true, labelIndexer, featureIndexer, alignFeatureIndexer)
     val constraintCounts = newConstraintParams(false, true, constraintFeatureIndexer)
 
     def doInfer(ex: FeatVecAlignmentMentionExample, stepSize: Double) {
-      // val truthInfer = newConstraintMatchInferencer(ex, params, params, constraintParams, constraintCounts,
-      //  InferSpec(0, 1, false, ex.isRecord, false, false, false, true, 1, 0), false)
-      // expectations
       val predInfer = new CRFMatchSegmentationInferencer(labelIndexer, maxLengths, getAlignFeatureVector,
         ex, params, counts, InferSpec(0, 1, false, false, false, false, false, true, 1, -stepSize),
         false, false)
       predInfer.updateCounts
-      // stats += (truthInfer.stats - predInfer.stats) * stepSize
       stats -= predInfer.stats * stepSize
     }
   }
 
   def learnSemiSupervisedAlignParamsCRF(numIter: Int, examples: Seq[FeatVecAlignmentMentionExample],
-                                        params: Params, constraintParams: ConstraintParams,
+                                        params: Params, constraintParams: ConstraintParams, unlabeledWeight: Double,
                                         invVariance: Double): Params = {
     // calculate constraints once
     val constraintLatch = new CountDownLatch(numWorkers)
     val constraintWorkers = Vector.fill(numWorkers)(
-      actorOf(new CRFSemiSupConstraintsSegmentationMatchWorker(0, params, constraintParams, constraintLatch)).start())
+      actorOf(new CRFSemiSupConstraintsSegmentationMatchWorker(0, params, unlabeledWeight, constraintParams,
+        constraintLatch)).start())
     for (b <- 0 until numBatches(examples.size)) {
       constraintWorkers(b % numWorkers) ! ProcessMatchExamples(examples.slice(b * batchSize, (b + 1) * batchSize))
     }
@@ -1123,7 +1126,7 @@ trait AbstractAlign extends HasLogger {
       def getValueAndGradient: (Params, ProbStats) = {
         val expectationLatch = new CountDownLatch(numWorkers)
         val workers = Vector.fill(numWorkers)(
-          actorOf(new CRFSemiSupExpectationsSegmentationMatchWorker(0, params, constraintParams,
+          actorOf(new CRFSemiSupExpectationsSegmentationMatchWorker(0, params, unlabeledWeight, constraintParams,
             expectationLatch)).start())
         for (b <- 0 until numBatches(examples.size)) {
           workers(b % numWorkers) ! ProcessMatchExamples(examples.slice(b * batchSize, (b + 1) * batchSize))

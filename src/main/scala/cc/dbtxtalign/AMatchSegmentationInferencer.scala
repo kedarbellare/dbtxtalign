@@ -11,24 +11,21 @@ import cc.refectorie.user.kedarb.dynprog.InferSpec
 
 trait AMatchSegmentationInferencer[Feature, Example <: AFeatAlignmentMentionExample[Feature]]
   extends AMatchSegmentationBasedInferencer[Feature, Example, Params] {
-  override lazy val transitionParams = params.transitions.transitions
+  override def transitionParams = params.transitions.transitions
 
-  override lazy val transitionCounts = counts.transitions.transitions
+  override def transitionCounts = counts.transitions.transitions
 
-  override lazy val startParams = params.transitions.starts
+  override def startParams = params.transitions.starts
 
-  override lazy val startCounts = counts.transitions.starts
+  override def startCounts = counts.transitions.starts
 
-  override lazy val emissionParams = params.emissions.emissions
+  override def emissionParams = params.emissions.emissions
 
-  override lazy val emissionCounts = counts.emissions.emissions
+  override def emissionCounts = counts.emissions.emissions
 
-  override lazy val alignParams = params.aligns.labelAligns
+  override def alignParams = params.aligns.labelAligns
 
-  override lazy val alignCounts = counts.aligns.labelAligns
-
-  // (label, phrase, otherPhrase) => alignFeatureVector
-  def alignFeaturizer: (Int, String, Int, Int, String, Int, Int) => FtrVec
+  override def alignCounts = counts.aligns.labelAligns
 }
 
 class CRFMatchSegmentationInferencer(val labelIndexer: Indexer[String], val maxLengths: Seq[Int],
@@ -45,7 +42,7 @@ class CRFMatchSegmentationInferencer(val labelIndexer: Indexer[String], val maxL
     if (!x.isNaN) update(emissionCounts(a), featSeq(k), x)
   }
 
-  def scoreSimilarity(otherIndex: Int, a: Int, i: Int, j: Int, oi: Int, oj: Int) = {
+  def scoreSimilarity(otherIndex: Int, a: Int, i: Int, j: Int, oi: Int, oj: Int): Double = {
     score(alignParams(a), alignFeaturizer(a, ex.id, i, j, otherIds(otherIndex), oi, oj))
   }
 

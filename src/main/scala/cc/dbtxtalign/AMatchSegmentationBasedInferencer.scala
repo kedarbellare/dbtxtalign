@@ -72,8 +72,7 @@ trait AMatchSegmentationBasedInferencer[Feature, Example <: AFeatAlignmentMentio
                 def setPosterior(prob: Double) {
                   updateTransition(a, b, i, j, prob)
                   updateEmission(b, i, j, prob)
-                  if (otherIndex >= 0 && otherIndex < otherIds.size)
-                    updateSimilarity(otherIndex, a, i, j, oi, oj, prob)
+                  if (otherIndex >= 0 && otherIndex < otherIds.size) updateSimilarity(otherIndex, b, i, j, oi, oj, prob)
                 }
 
                 def choose(widget: MatchSegmentation) = {
