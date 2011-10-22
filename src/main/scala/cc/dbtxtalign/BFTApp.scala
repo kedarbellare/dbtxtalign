@@ -68,30 +68,30 @@ trait ABFTAlign extends AbstractAlign {
       m: Mention => PhraseHash.ngramsWordHash(m.extractTrueWordsFor("hotelname"), Seq(1, 2))
     }, {
       m: Mention => PhraseHash.ngramsWordHash(m.words, Seq(1, 2))
-    })
+    }, maxRecords, maxTexts)
     val nameIndex2 = new InvertedIndexBlocker(25, recordsColl, textsColl, {
       m: Mention => PhraseHash.ngramsCharHash(m.extractTrueWordsFor("hotelname").mkString(" "), Seq(4, 5, 6))
     }, {
       m: Mention => PhraseHash.ngramsCharHash(m.words.mkString(" "), Seq(4, 5, 6))
-    })
+    }, maxRecords, maxTexts)
     val areaIndex1 = new InvertedIndexBlocker(250, recordsColl, textsColl, {
       m: Mention => PhraseHash.ngramsWordHash(m.extractTrueWordsFor("localarea"), Seq(1, 2))
     }, {
       m: Mention => PhraseHash.ngramsWordHash(m.words, Seq(1, 2))
-    })
+    }, maxRecords, maxTexts)
     val areaIndex2 = new InvertedIndexBlocker(50, recordsColl, textsColl, {
       m: Mention => PhraseHash.ngramsCharHash(m.extractTrueWordsFor("localarea").mkString(" "), Seq(4, 5, 6))
     }, {
       m: Mention => PhraseHash.ngramsCharHash(m.words.mkString(" "), Seq(4, 5, 6))
-    })
+    }, maxRecords, maxTexts)
     val unionIndex1 = new UnionIndexBlocker(Seq(nameIndex1, nameIndex2, areaIndex1, areaIndex2), true)
 
     // recall of hash1
-    logger.info("#name1Pairs=" + nameIndex1.numPairs + " recall=" + nameIndex1.getRecall(cluster2ids, recordsColl, textsColl))
-    logger.info("#name2Pairs=" + nameIndex2.numPairs + " recall=" + nameIndex2.getRecall(cluster2ids, recordsColl, textsColl))
-    logger.info("#area1Pairs=" + areaIndex1.numPairs + " recall=" + areaIndex1.getRecall(cluster2ids, recordsColl, textsColl))
-    logger.info("#area2Pairs=" + areaIndex2.numPairs + " recall=" + areaIndex2.getRecall(cluster2ids, recordsColl, textsColl))
-    logger.info("#unionPairs=" + unionIndex1.numPairs + " recall=" + unionIndex1.getRecall(cluster2ids, recordsColl, textsColl, true))
+    logger.info("#name1Pairs=" + nameIndex1.numPairs + " recall=" + nameIndex1.getRecall(cluster2ids, recordsColl, textsColl, maxRecords, maxTexts))
+    logger.info("#name2Pairs=" + nameIndex2.numPairs + " recall=" + nameIndex2.getRecall(cluster2ids, recordsColl, textsColl, maxRecords, maxTexts))
+    logger.info("#area1Pairs=" + areaIndex1.numPairs + " recall=" + areaIndex1.getRecall(cluster2ids, recordsColl, textsColl, maxRecords, maxTexts))
+    logger.info("#area2Pairs=" + areaIndex2.numPairs + " recall=" + areaIndex2.getRecall(cluster2ids, recordsColl, textsColl, maxRecords, maxTexts))
+    logger.info("#unionPairs=" + unionIndex1.numPairs + " recall=" + unionIndex1.getRecall(cluster2ids, recordsColl, textsColl, maxRecords, maxTexts, true))
 
     unionIndex1
   }
@@ -405,8 +405,8 @@ object BFTApp extends ABFTAlign {
   }
 
   def main(args: Array[String]) {
-    val rawRecords = recordsColl.map(new Mention(_)).toArray
-    val rawTexts = textsColl.map(new Mention(_)).toArray
+    val rawRecords = recordsColl.map(new Mention(_)).take(maxRecords).toArray
+    val rawTexts = textsColl.map(new Mention(_)).take(maxTexts).toArray
     val rawMentions = rawRecords ++ rawTexts
     logger.info("#records=" + rawRecords.size + " #texts=" + rawTexts.size)
 

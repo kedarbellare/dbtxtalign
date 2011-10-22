@@ -114,6 +114,10 @@ trait AbstractAlign extends HasLogger {
 
   def batchSize = DBAlignConfig.get[Int]("batchSize", 10)
 
+  def maxRecords = DBAlignConfig.get[Int]("maxRecords", -1)
+
+  def maxTexts = DBAlignConfig.get[Int]("maxTexts", -1)
+
   def numBatches(size: Int) = (size + batchSize - 1) / batchSize
 
   def _gte(simStr: String, threshold: Double) = simStr + ">=" + threshold

@@ -10,7 +10,8 @@ import com.mongodb.casbah.Imports._
 
 class InvertedIndexBlocker(val maxBlockSize: Int, val recordsColl: MongoCollection, val textsColl: MongoCollection,
                            val recordExtractor: Mention => HashSet[String],
-                           val textExtractor: Mention => HashSet[String]) extends AbstractBlocker {
+                           val textExtractor: Mention => HashSet[String],
+                           val maxRecords: Int = -1, val maxTexts: Int = -1) extends AbstractBlocker {
   private val validKeys = initValidKeys()
   private val invertedIndex = initInvertedIndex()
   private val allPairs = initPairs()
@@ -18,10 +19,10 @@ class InvertedIndexBlocker(val maxBlockSize: Int, val recordsColl: MongoCollecti
   private def initValidKeys(): HashSet[String] = {
     val keys = new HashSet[String]
     // first collect record keys
-    for (dbo <- recordsColl.find(); m = new Mention(dbo)) keys ++= recordExtractor(m)
+    for (dbo <- iterate(recordsColl, maxRecords); m = new Mention(dbo)) keys ++= recordExtractor(m)
     // count vector
     val counts = new HashMap[String, Int]
-    for (dbo <- recordsColl.find() ++ textsColl.find(); m = new Mention(dbo)) {
+    for (dbo <- iterate(recordsColl, maxRecords) ++ iterate(textsColl, maxTexts); m = new Mention(dbo)) {
       val mentionKeys = if (m.isRecord) recordExtractor(m) else textExtractor(m)
       mentionKeys.foreach(w => {
         counts(w) = counts.getOrElse(w, 0) + 1
@@ -39,7 +40,7 @@ class InvertedIndexBlocker(val maxBlockSize: Int, val recordsColl: MongoCollecti
 
   private def initInvertedIndex(): HashMap[String, Seq[String]] = {
     val invIndex = new HashMap[String, Seq[String]]
-    for (dbo <- recordsColl.find() ++ textsColl.find(); m = new Mention(dbo)) {
+    for (dbo <- iterate(recordsColl, maxRecords) ++ iterate(textsColl, maxTexts); m = new Mention(dbo)) {
       val mentionKeys = getValidKeysFor(m)
       mentionKeys.foreach(key => {
         invIndex(key) = invIndex.getOrElse(key, Seq.empty[String]) ++ Seq(m.id)
@@ -57,7 +58,7 @@ class InvertedIndexBlocker(val maxBlockSize: Int, val recordsColl: MongoCollecti
 
   private def initPairs(): HashSet[(String, String)] = {
     val idPairs = new HashSet[(String, String)]
-    for (dbo <- recordsColl.find() ++ textsColl.find(); m = new Mention(dbo)) {
+    for (dbo <- iterate(recordsColl, maxRecords) ++ iterate(textsColl, maxTexts); m = new Mention(dbo)) {
       val nbrIds = getNeighborIds(m)
       nbrIds.filter(_ != m.id).foreach(id => idPairs += orderedIds(m.id, id))
     }
